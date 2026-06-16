@@ -1,0 +1,26 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.fuelize.code.app-mergeDebugResources-30:/values-zh/values-zh.xml",
+            "map": [
+                {
+                    "source": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\src\\main\\res\\values-zh\\strings.xml",
+                    "from": {
+                        "startLines": "2,5,4,3,8,9,7,11,6,10",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "57,186,146,108,300,336,260,449,223,396",
+                        "endColumns": "49,35,38,36,34,58,38,53,35,51",
+                        "endOffsets": "102,217,180,140,330,390,294,498,254,443"
+                    },
+                    "to": {
+                        "startLines": "2,3,4,5,6,7,8,9,10,11",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "55,105,141,180,217,252,311,350,404,440",
+                        "endColumns": "49,35,38,36,34,58,38,53,35,51",
+                        "endOffsets": "100,136,175,212,247,306,345,399,435,487"
+                    }
+                }
+            ]
+        }
+    ]
+}

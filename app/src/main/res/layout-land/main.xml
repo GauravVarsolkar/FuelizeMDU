@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    tools:ignore="MissingDefaultResource">
+    <TextView
+        android:id="@+id/textView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="CSI Eastman DU Test App"
+        android:textSize="20sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_status_message"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Read STATUS"
+            android:textColor="#fff" />
+
+
+        <Button
+            android:id="@+id/btn_set_preset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Set Preset (10 Liters)"
+            android:textColor="#fff" />
+
+        <Button
+            android:id="@+id/btn_start_fueling"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Start Fueling"
+            android:textColor="#fff" />
+
+        <Button
+            android:id="@+id/btn_read_totaliser"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Read TOTALISER"
+            android:textColor="#fff" />
+
+
+        <Button
+            android:id="@+id/btn_stop_fueling"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Stop Fueling"
+            android:textColor="#fff" />
+
+    </LinearLayout>
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/btn_pause"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Pause"
+            android:textColor="#fff" />
+
+
+        <Button
+            android:id="@+id/btn_resume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Resume"
+            android:textColor="#fff" />
+
+        <Button
+            android:id="@+id/btn_get_fueling_data"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_margin="5dp"
+            android:background="#0000FF"
+            android:padding="10dp"
+            android:text="Get Fueling Data"
+            android:textColor="#fff" />
+
+    </LinearLayout>
+    <LinearLayout
+        android:id="@+id/LinearLayoutRecDisp"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal">
+
+        <ScrollView
+            android:id="@+id/scrollView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <TextView
+                android:id="@+id/tv_output"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:background="#C5DDF1"
+                android:hint="OUTPUT"
+                android:textColorHint="#000"
+                android:padding="10dp"
+                android:textColor="#000"
+                android:textSize="15sp" />
+
+        </ScrollView>
+
+    </LinearLayout>
+
+
+
+</LinearLayout>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ComUSB_RS485</string>
+    <string name="auto">自动</string>
+    <string name="autoclr">自清</string>
+    <string name="clear">清除</string>
+    <string name="com">串口</string>
+    <string name="nopermission">打开串口失败:没有串口读/写权限!</string>
+    <string name="opened">已打开</string>
+    <string name="parametererr">打开串口失败:参数错误!</string>
+    <string name="send">发送</string>
+    <string name="unknownerr">打开串口失败:未知错误!</string>
+</resources>

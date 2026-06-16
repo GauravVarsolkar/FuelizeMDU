@@ -1,0 +1,90 @@
+[
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_cell_shape_all_bg.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/cell_shape_all_bg.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/layout-land_main.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/layout-land/main.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/layout_order_complete_dialog.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/layout/order_complete_dialog.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_hectronics.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/hectronics.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/layout-port_main.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/layout-port/main.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_icon_fuel_pause.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/icon_fuel_pause.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_back_arrow.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/back_arrow.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_logo.jpeg.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/logo.jpeg"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/layout_otp_decant_dialog.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/layout/otp_decant_dialog.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_eastman.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/eastman.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_logo1.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/logo1.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_idex.jpeg.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/idex.jpeg"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_border_box.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/border_box.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_shape.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/shape.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-mdpi_ic_launcher.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-mdpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_buttons_border.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/buttons_border.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_copyright.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/copyright.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-ldpi_ic_launcher.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-ldpi/ic_launcher.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-ldpi_shape.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-ldpi/shape.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/layout_activity_eastman_decant.xml.flat",
+        "source": "com.fuelize.code.app-main-34:/layout/activity_eastman_decant.xml"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_icon_fuel_start.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/icon_fuel_start.png"
+    },
+    {
+        "merged": "com.fuelize.code.app-merged_res-32:/drawable-hdpi_ic_launcher.png.flat",
+        "source": "com.fuelize.code.app-main-34:/drawable-hdpi/ic_launcher.png"
+    }
+]

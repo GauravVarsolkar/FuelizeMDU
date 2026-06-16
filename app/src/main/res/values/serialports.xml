@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="serial_ports" translatable="false">
+        <item>none</item>
+        <item>even</item>
+        <item>odd</item>
+        <item>mark</item>
+        <item>space</item>
+    </string-array>
+</resources>

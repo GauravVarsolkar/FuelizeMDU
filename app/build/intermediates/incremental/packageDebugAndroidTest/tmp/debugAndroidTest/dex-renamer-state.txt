@@ -1,0 +1,7 @@
+#Tue Jun 16 14:29:49 IST 2026
+base.1=D\:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\dex\\debugAndroidTest\\mergeProjectDexDebugAndroidTest\\12\\classes.dex
+path.1=12/classes.dex
+base.0=D\:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\dex\\debugAndroidTest\\mergeProjectDexDebugAndroidTest\\0\\classes.dex
+renamed.1=classes2.dex
+renamed.0=classes.dex
+path.0=0/classes.dex
