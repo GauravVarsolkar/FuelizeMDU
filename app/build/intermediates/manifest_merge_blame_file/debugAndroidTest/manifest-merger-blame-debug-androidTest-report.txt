@@ -3,32 +3,32 @@
 3    package="com.fuelize.code.test" >
 4
 5    <uses-sdk
-5-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:5:5-74
+5-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:5:5-74
 6        android:minSdkVersion="28"
-6-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:5:15-41
+6-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:5:15-41
 7        android:targetSdkVersion="34" />
-7-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:5:42-71
+7-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:5:42-71
 8
 9    <instrumentation
-9-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:11:5-15:66
+9-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:11:5-15:66
 10        android:name="android.test.InstrumentationTestRunner"
-10-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:11:22-75
+10-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:11:22-75
 11        android:functionalTest="false"
-11-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:14:22-52
+11-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:14:22-52
 12        android:handleProfiling="false"
-12-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:13:22-53
+12-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:13:22-53
 13        android:label="Tests for com.fuelize.code"
-13-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:15:22-64
+13-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:15:22-64
 14        android:targetPackage="com.fuelize.code" />
-14-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:12:22-62
+14-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:12:22-62
 15
 16    <application
-16-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:7:5-9:19
+16-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:7:5-9:19
 17        android:debuggable="true"
 18        android:extractNativeLibs="false" >
 19        <uses-library android:name="android.test.runner" />
-19-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:8:9-60
-19-->D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15927724999728679080.xml:8:23-57
+19-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:8:9-60
+19-->D:\Gaurav\FuelizeMDU\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest14523283495192787869.xml:8:23-57
 20    </application>
 21
 22</manifest>

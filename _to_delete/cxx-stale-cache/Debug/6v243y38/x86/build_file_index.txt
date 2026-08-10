@@ -1,0 +1,2 @@
+D:\Gaurav\FuelizeMDU\app\src\main\jni\Android.mk
+D:\Gaurav\FuelizeMDU\app\src\main\jni\Application.mk

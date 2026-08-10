@@ -1,0 +1,55 @@
+{
+  "buildFiles": [
+    "C:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Android.mk",
+    "C:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Application.mk"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "C:\\Users\\GAURAV\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\ndk-build.cmd",
+      "NDK_PROJECT_PATH\u003dnull",
+      "APP_BUILD_SCRIPT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Android.mk",
+      "NDK_APPLICATION_MK\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Application.mk",
+      "APP_ABI\u003dx86_64",
+      "NDK_ALL_ABIS\u003dx86_64",
+      "NDK_DEBUG\u003d1",
+      "APP_PLATFORM\u003dandroid-28",
+      "NDK_OUT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/obj",
+      "NDK_LIBS_OUT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/lib",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "C:\\Users\\GAURAV\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\ndk-build.cmd",
+    "NDK_PROJECT_PATH\u003dnull",
+    "APP_BUILD_SCRIPT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Android.mk",
+    "NDK_APPLICATION_MK\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Application.mk",
+    "APP_ABI\u003dx86_64",
+    "NDK_ALL_ABIS\u003dx86_64",
+    "NDK_DEBUG\u003d1",
+    "APP_PLATFORM\u003dandroid-28",
+    "NDK_OUT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/obj",
+    "NDK_LIBS_OUT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/lib",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "serial_port-debug-x86_64": {
+      "artifactName": "serial_port",
+      "buildCommandComponents": [
+        "C:\\Users\\GAURAV\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\ndk-build.cmd",
+        "NDK_PROJECT_PATH\u003dnull",
+        "APP_BUILD_SCRIPT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Android.mk",
+        "NDK_APPLICATION_MK\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\src\\main\\jni\\Application.mk",
+        "APP_ABI\u003dx86_64",
+        "NDK_ALL_ABIS\u003dx86_64",
+        "NDK_DEBUG\u003d1",
+        "APP_PLATFORM\u003dandroid-28",
+        "NDK_OUT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/obj",
+        "NDK_LIBS_OUT\u003dC:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/lib",
+        "C:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/obj/local/x86_64/libserial_port.so"
+      ],
+      "abi": "x86_64",
+      "output": "C:\\Gaurav\\FuelizeMDU\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38\\obj\\local\\x86_64\\libserial_port.so",
+      "runtimeFiles": []
+    }
+  }
+}

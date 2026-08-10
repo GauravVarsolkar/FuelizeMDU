@@ -1,5 +1,5 @@
-com.fuelize.code.test.app-androidTest-0 D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\generated\res\resValues\androidTest\debug
-com.fuelize.code.test.app-androidTest-1 D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\generated\res\rs\androidTest\debug
-com.fuelize.code.test.app-mergeDebugAndroidTestResources-2 D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
-com.fuelize.code.test.app-mergeDebugAndroidTestResources-3 D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
-com.fuelize.code.test.app-merged_res-4 D:\Gaurav\MM_MDU_RS485_2025\MM_MDU_RS485_2025\ComAssistantUSB\app\build\intermediates\merged_res\debugAndroidTest
+com.fuelize.code.test.app-androidTest-0 D:\Gaurav\FuelizeMDU\app\build\generated\res\resValues\androidTest\debug
+com.fuelize.code.test.app-androidTest-1 D:\Gaurav\FuelizeMDU\app\build\generated\res\rs\androidTest\debug
+com.fuelize.code.test.app-mergeDebugAndroidTestResources-2 D:\Gaurav\FuelizeMDU\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
+com.fuelize.code.test.app-mergeDebugAndroidTestResources-3 D:\Gaurav\FuelizeMDU\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
+com.fuelize.code.test.app-merged_res-4 D:\Gaurav\FuelizeMDU\app\build\intermediates\merged_res\debugAndroidTest

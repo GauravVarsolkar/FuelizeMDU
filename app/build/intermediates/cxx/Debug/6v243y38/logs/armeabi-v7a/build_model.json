@@ -6,9 +6,9 @@
     "deprecated": false,
     "default": true
   },
-  "cxxBuildFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\.cxx\\Debug\\6v243y38\\armeabi-v7a",
-  "soFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\cxx\\Debug\\6v243y38\\obj\\local\\armeabi-v7a",
-  "soRepublishFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\ndkBuild\\debug\\obj\\local\\armeabi-v7a",
+  "cxxBuildFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\.cxx\\Debug\\6v243y38\\armeabi-v7a",
+  "soFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38\\obj\\local\\armeabi-v7a",
+  "soRepublishFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates\\ndkBuild\\debug\\obj\\local\\armeabi-v7a",
   "abiPlatformVersion": 28,
   "variant": {
     "buildSystemArgumentList": [],
@@ -26,15 +26,15 @@
     "implicitBuildTargetSet": [],
     "cmakeSettingsConfiguration": "android-gradle-plugin-predetermined-name",
     "module": {
-      "cxxFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\.cxx",
-      "intermediatesBaseFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates",
-      "intermediatesFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\cxx",
+      "cxxFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\.cxx",
+      "intermediatesBaseFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates",
+      "intermediatesFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates\\cxx",
       "gradleModulePathName": ":app",
-      "moduleRootFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app",
-      "moduleBuildFile": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build.gradle",
-      "makeFile": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\src\\main\\jni\\Android.mk",
+      "moduleRootFolder": "D:\\Gaurav\\FuelizeMDU\\app",
+      "moduleBuildFile": "D:\\Gaurav\\FuelizeMDU\\app\\build.gradle",
+      "makeFile": "D:\\Gaurav\\FuelizeMDU\\app\\src\\main\\jni\\Android.mk",
       "buildSystem": "NDK_BUILD",
-      "ndkFolder": "C:\\Android\\Sdk\\ndk\\23.1.7779620",
+      "ndkFolder": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620",
       "ndkVersion": "23.1.7779620",
       "ndkSupportedAbiList": [
         "ARMEABI_V7A",
@@ -98,21 +98,21 @@
           "default": true
         }
       ],
-      "cmakeToolchainFile": "C:\\Android\\Sdk\\ndk\\23.1.7779620\\build\\cmake\\android.toolchain.cmake",
+      "cmakeToolchainFile": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\build\\cmake\\android.toolchain.cmake",
       "stlSharedObjectMap": {
         "LIBCXX_SHARED": {
-          "ARMEABI_V7A": "C:\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\arm-linux-androideabi\\libc++_shared.so",
-          "ARM64_V8A": "C:\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\aarch64-linux-android\\libc++_shared.so",
-          "X86": "C:\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\i686-linux-android\\libc++_shared.so",
-          "X86_64": "C:\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\x86_64-linux-android\\libc++_shared.so"
+          "ARMEABI_V7A": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\arm-linux-androideabi\\libc++_shared.so",
+          "ARM64_V8A": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\aarch64-linux-android\\libc++_shared.so",
+          "X86": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\i686-linux-android\\libc++_shared.so",
+          "X86_64": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk\\ndk\\23.1.7779620\\toolchains\\llvm\\prebuilt\\windows-x86_64\\sysroot\\usr\\lib\\x86_64-linux-android\\libc++_shared.so"
         },
         "LIBCXX_STATIC": {},
         "NONE": {},
         "SYSTEM": {}
       },
       "project": {
-        "rootBuildGradleFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB",
-        "sdkFolder": "C:\\Android\\Sdk",
+        "rootBuildGradleFolder": "D:\\Gaurav\\FuelizeMDU",
+        "sdkFolder": "C:\\Users\\Lenovo\\AppData\\Local\\Android\\Sdk",
         "isBuildOnlyTargetAbiEnabled": true,
         "isCmakeBuildCohabitationEnabled": false,
         "isPrefabEnabled": false
@@ -128,20 +128,20 @@
   "buildSettings": {
     "environmentVariables": []
   },
-  "prefabFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\.cxx\\Debug\\6v243y38\\prefab\\armeabi-v7a",
+  "prefabFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\.cxx\\Debug\\6v243y38\\prefab\\armeabi-v7a",
   "isActiveAbi": true,
   "fullConfigurationHash": "6v243y38493mhj735n6iv4315541u5v1e1nn5u335vw291ao6h45403zu",
   "fullConfigurationHashKey": "# Values used to calculate the hash in this folder name.\n# Should not depend on the absolute path of the project itself.\n#   - AGP: 7.4.2.\n#   - $NDK is the path to NDK 23.1.7779620.\n#   - $PROJECT is the path to the parent folder of the root Gradle build file.\n#   - $ABI is the ABI to be built with. The specific value doesn\u0027t contribute to the value of the hash.\n#   - $HASH is the hash value computed from this text.\nNDK_PROJECT_PATH\u003dnull\nAPP_BUILD_SCRIPT\u003d$PROJECT/app/src/main/jni/Android.mk\nNDK_APPLICATION_MK\u003d$PROJECT/app/src/main/jni/Application.mk\nAPP_ABI\u003d$ABI\nNDK_ALL_ABIS\u003d$ABI\nNDK_DEBUG\u003d1\nAPP_PLATFORM\u003dandroid-28\nNDK_OUT\u003d$PROJECT/app/build/intermediates/cxx/Debug/$HASH/obj\nNDK_LIBS_OUT\u003d$PROJECT/app/build/intermediates/cxx/Debug/$HASH/lib",
   "configurationArguments": [
     "NDK_PROJECT_PATH\u003dnull",
-    "APP_BUILD_SCRIPT\u003dD:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\src\\main\\jni\\Android.mk",
-    "NDK_APPLICATION_MK\u003dD:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\src\\main\\jni\\Application.mk",
+    "APP_BUILD_SCRIPT\u003dD:\\Gaurav\\FuelizeMDU\\app\\src\\main\\jni\\Android.mk",
+    "NDK_APPLICATION_MK\u003dD:\\Gaurav\\FuelizeMDU\\app\\src\\main\\jni\\Application.mk",
     "APP_ABI\u003darmeabi-v7a",
     "NDK_ALL_ABIS\u003darmeabi-v7a",
     "NDK_DEBUG\u003d1",
     "APP_PLATFORM\u003dandroid-28",
-    "NDK_OUT\u003dD:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/obj",
-    "NDK_LIBS_OUT\u003dD:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/lib"
+    "NDK_OUT\u003dD:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/obj",
+    "NDK_LIBS_OUT\u003dD:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38/lib"
   ],
-  "intermediatesParentFolder": "D:\\Gaurav\\MM_MDU_RS485_2025\\MM_MDU_RS485_2025\\ComAssistantUSB\\app\\build\\intermediates\\cxx\\Debug\\6v243y38"
+  "intermediatesParentFolder": "D:\\Gaurav\\FuelizeMDU\\app\\build\\intermediates\\cxx\\Debug\\6v243y38"
 }

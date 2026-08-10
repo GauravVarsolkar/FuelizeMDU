@@ -35,6 +35,8 @@ import com.fuelize.model.OrderData;
 import java.io.IOException;
 import java.security.InvalidParameterException;
 import java.text.DecimalFormat;
+import java.text.DecimalFormatSymbols;
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -56,6 +58,10 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
 
     private static final String TAG = "TokheimUDC";
     static int PollingTimer = 1000;
+
+    // RS-485 serial port. Kept identical to the port EastmanDecantActivity uses
+    // (Eastman relies on the SerialHelper default, which is "/dev/ttyUSB0").
+    private static final String SERIAL_PORT = "/dev/ttyUSB0";
 
     // UDC Protocol Constants
     private static final byte UDC_FP_ADDRESS = (byte) 0xF0;
@@ -102,7 +108,12 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     Boolean isRun = true;
     DispQueueThread DispQueue;
     ScrollView scrollView;
-    DecimalFormat df = new DecimalFormat("#.##");
+    // Pinned to Locale.US on purpose. df.format() feeds the csifuel:// callback
+    // (order_quantity / start_totalizer / end_totalizer), which the driver app reads
+    // with double.tryParse(). Under a comma-decimal device locale, 10.5 formats as
+    // "10,5", tryParse returns null -> 0.0, and DeliveryScreen pops "Failed to
+    // deliver order" on a delivery that actually succeeded.
+    DecimalFormat df = new DecimalFormat("#.##", DecimalFormatSymbols.getInstance(Locale.US));
     StringBuilder sMsg;
 
     int ProcessStage = 0;
@@ -112,7 +123,10 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     String DU_ResponseStr = "";
     public static String crmNumber = "NA";
     public static String order_qty = "NA";
-    public static String unitPrice = "NA";
+    // NOTE: the former "unitPrice" static was removed. It was never assigned by
+    // anything, yet it fed the A5 Authorize price via a 100.00 default - i.e. it
+    // looked like a price knob while guaranteeing a fabricated rate. The price is
+    // now read from the pump itself (Stage 12/13) and there is no default.
 
     private Boolean PolStatus = true;
     private Boolean DUNotRespondDialog = false;
@@ -143,6 +157,49 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     float volumeFloatFinal = 0.0f;
     float StartTotalizer = 0;
     float EndTotalizer = 0;
+
+    // Retry budgets for the totalizer reads (A9). Bounded so a pump that never
+    // answers A9 can never deadlock the state machine (see Stage 3 / Stage 8).
+    private static final int START_TOT_MAX_RETRY = 3;
+    private static final int END_TOT_MAX_RETRY = 5;
+    private int StartTotRetryCount = 0;
+    private int EndTotRetryCount = 0;
+
+    // True only when the corresponding totalizer was actually read from the pump.
+    private boolean StartTotalizerValid = false;
+    private boolean EndTotalizerValid = false;
+
+    // Unit price read back from the pump itself via A1 (Display Data), bytes 0-1.
+    // The FP is configured with its own price-per-litre (e.g. 20.93 Pula). If the
+    // price carried in the A5 Authorize frame does not match it, the FP can refuse
+    // the authorization and the operator display stays on "Waiting for FCC
+    // Authorization" forever. Reading it from the pump keeps this site-independent
+    // and also stops the transaction being priced at the hardcoded 100.00 fallback.
+    private static final int PRICE_MAX_RETRY = 3;
+    private int PriceRetryCount = 0;
+    private float PumpUnitPrice = 0f;
+    private boolean PumpUnitPriceValid = false;
+
+    // Preset acknowledge-and-retry, modelled on EastmanDecantActivity Stage 5, which
+    // re-sends its preset every poll tick until the DU answers with a known ACK and
+    // only then advances. Tokheim previously fired AB 26 exactly once behind the
+    // IsPreAuthorized latch and advanced regardless of the reply, so a preset that
+    // was lost or refused went completely unnoticed.
+    // Success signal here is the FP reaching 0xA3 (Preset Ready) - a documented
+    // protocol state rather than a magic byte, so it holds whether or not this FP
+    // bothers to send the 0xB0 ACK.
+    private static final int PRESET_MAX_RETRY = 3;
+    private int PresetRetryCount = 0;
+    private boolean PresetConfirmed = false;
+    private boolean PresetAckSeen = false;
+
+    // Bound on Stage 1's unrecognised-status poll. Monotonic for the life of one
+    // delivery attempt - deliberately not reset, since Stage 1 is entered once and
+    // any re-entry (0x2F init, halted-sale recovery) should still count toward the
+    // same budget rather than resetting it and risking an endless alternation.
+    // ~15 polls at 1s each before the operator is told what the DU is stuck in.
+    private static final int UNKNOWN_STATUS_MAX = 15;
+    private int UnknownStatusCount = 0;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -226,8 +283,9 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             } else {
                 CloseComPort(ComA);
                 if (DLDataReceived) {
+                    // Both-or-neither totalizers - see totalizersUsable().
                     Uri uri = Uri.parse("csifuel://driver/delivery_screen?order_quantity=" + df.format(volumeFloat) +
-                            "&start_totalizer=" + df.format(StartTotalizer) + "&end_totalizer=" + df.format(EndTotalizer));
+                            "&start_totalizer=" + startTotForCallback() + "&end_totalizer=" + endTotForCallback());
                     try {
                         startActivity(new Intent(Intent.ACTION_VIEW, uri));
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) finishAndRemoveTask();
@@ -269,11 +327,14 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     private void initializeSerialPort() {
         Log.i(TAG, "initializeSerialPort() called");
         ComA = new SerialControl();
-        ComA.setPort("/dev/ttyCOM10");
+        // Match the Eastman activity's RS-485 port. Eastman never calls setPort(),
+        // so it uses the SerialHelper default ("/dev/ttyUSB0"). Previously this was
+        // hardcoded to "/dev/ttyCOM10", which put the two protocols on different ports.
+        ComA.setPort(SERIAL_PORT);
         ComA.setBaudRate(9600);
         ComA.setParity(0);
         OpenComPort(ComA);
-        Log.i(TAG, "Serial port init complete - Port: /dev/ttyS1 | Baud: 9600 | isOpen: " + (ComA != null ? ComA.isOpen() : "null"));
+        Log.i(TAG, "Serial port init complete - Port: " + SERIAL_PORT + " | Baud: 9600 | isOpen: " + (ComA != null ? ComA.isOpen() : "null"));
     }
 
     @SuppressLint("SetTextI18n")
@@ -304,8 +365,8 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                     try {
                         OrderData o = helper.getOrderData(DL_ORDER_NO);
                         Uri uri = Uri.parse("csifuel://driver/delivery_screen?order_quantity=" + o.getDecantQty()
-                                + "&start_totalizer=" + o.getStartTotalizer()
-                                + "&end_totalizer=" + o.getEndTotalizer());
+                                + "&start_totalizer=" + totOrZero(o.getStartTotalizer())
+                                + "&end_totalizer=" + totOrZero(o.getEndTotalizer()));
                         startActivity(new Intent(Intent.ACTION_VIEW, uri));
                     } catch (Exception e) {
                         Log.e(TAG, "Re-send error: " + e.getMessage());
@@ -446,7 +507,64 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
         return result;
     }
 
+    // =====================================================================================
+    // TOTALIZER REPORTING TO THE DRIVER APP  (csifuel:// callback)
+    // =====================================================================================
+    // The driver app (delivery_screen.dart -> finishClickEvent) branches on
+    // "widget.endTotalizer != 0":
+    //   end_totalizer != 0 -> it trusts BOTH values and posts start_du_left /
+    //                         end_du_left straight to the server, no prompt.
+    //   end_totalizer == 0 -> it opens its manual totalizer-entry dialog and the
+    //                         driver keys the readings in by hand.
+    // So a half-real pair (real end, 0 start) is the one genuinely broken case: it
+    // skips the dialog and silently posts a 0 start reading. These helpers enforce
+    // both-or-neither, so the driver app either gets two real readings or falls
+    // into its own manual-entry path, which is its designed fallback.
+
+    private boolean totalizersUsable() {
+        return StartTotalizerValid && EndTotalizerValid && EndTotalizer >= StartTotalizer;
+    }
+
+    private String startTotForCallback() {
+        return totalizersUsable() ? df.format(StartTotalizer) : "0";
+    }
+
+    private String endTotForCallback() {
+        return totalizersUsable() ? df.format(EndTotalizer) : "0";
+    }
+
+    // Stored values may be null for orders written before totalizers were persisted;
+    // "0" keeps the URI parseable and routes the driver app to its manual dialog.
+    private String totOrZero(String stored) {
+        return (stored == null || stored.trim().isEmpty() || stored.equals("null")) ? "0" : stored;
+    }
+
     private byte intToBCD(int value) { return (byte) (((value / 10) << 4) | (value % 10)); }
+
+    /** True only if both nibbles are valid BCD digits (0-9). bcdToDouble does not
+     *  validate, so a status byte or a corrupted frame would otherwise decode to a
+     *  plausible-looking number instead of being rejected. */
+    private boolean isValidBCD(byte b) {
+        int hi = (b >> 4) & 0x0F, lo = b & 0x0F;
+        return hi <= 9 && lo <= 9;
+    }
+
+    /** Stop the delivery and surface why. Used where continuing would mean guessing
+     *  at a value that affects what the customer is billed. Mirrors the existing
+     *  "Invalid qty" abort: parks in Stage 11 with polling off, so the message stays
+     *  on screen instead of being overwritten by the next poll tick. */
+    private void abortDelivery(String reason) {
+        Log.e(TAG, "Aborting delivery: " + reason);
+        tvFillingStatus.setTextColor(Color.RED);
+        tvFillingStatus.setText(reason);
+        tvLogs.append("\nABORT: " + reason);
+        finishOrderButton.setText("Close");
+        finishOrderButton.setBackgroundColor(Color.RED);
+        finishOrderButton.setVisibility(VISIBLE);
+        startDeliveryButton.setVisibility(View.INVISIBLE);
+        ProcessStage = 11;
+        PolStatus = false;
+    }
 
     private double bcdToDouble(long bcd, int dec) {
         long result = 0, mult = 1;
@@ -609,9 +727,23 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         resumeSale();
                                         ProcessStage = 0;
                                     } else {
-                                        Log.i(TAG, "Unknown status - Re-polling");
-                                        DU_ResponseStr = "";
-                                        requestStatus();
+                                        // Bounded. Previously this re-polled forever with no cap
+                                        // and no feedback: a FP left in Print Ready (0xA1) or
+                                        // Preset Ready (0xA3) by a previous sale matches none of
+                                        // the accepted statuses, so the screen sat on
+                                        // "Detecting..." indefinitely. DuConnectCounter cannot
+                                        // rescue it either - that only increments in Stage 0,
+                                        // which runs once.
+                                        UnknownStatusCount++;
+                                        Log.i(TAG, "Unknown status 0x" + String.format("%02X", lastStatusReceived)
+                                                + " - Re-polling (" + UnknownStatusCount + "/" + UNKNOWN_STATUS_MAX + ")");
+                                        if (UnknownStatusCount >= UNKNOWN_STATUS_MAX) {
+                                            abortDelivery("DU stuck in " + getStatusDescription(lastStatusReceived)
+                                                    + " - cannot start");
+                                        } else {
+                                            DU_ResponseStr = "";
+                                            requestStatus();
+                                        }
                                     }
                                 } else {
                                     Log.w(TAG, "Stage 1 - Doubletalk decode failed or empty");
@@ -626,12 +758,29 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                         }
                         // Stage 2: Read Start Totalizer
                         else if (ProcessStage == 2 && IsOtpSet) {
+                            // The start-totalizer read is attempted as originally intended.
+                            // Stage 3 now bounds the number of A9 attempts, so a pump that
+                            // never answers A9 can no longer stall the state machine.
                             DU_ResponseStr = "";
                             ProcessStage = 3;
                             requestTotals();
                         }
                         // Stage 3: Parse Start Totalizer
                         else if (ProcessStage == 3) {
+                            // ===================== FIX (START) =====================
+                            // BEFORE: both failure branches were
+                            //   else { DU_ResponseStr = ""; requestTotals(); }
+                            // with no retry cap. This pump answers A9 (Request Totals) with a
+                            // 2-byte status (e.g. "A0 5F" = 0xA0, handle up / awaiting
+                            // authorization) instead of totalizer data, so the ">= 22" check
+                            // never passed and Stage 3 re-sent A9 forever. Preset (AB 26) and
+                            // Authorize (A5) were never sent and the dispenser sat on
+                            // "Waiting for FCC authorization".
+                            // AFTER: try A9 up to START_TOT_MAX_RETRY times. If it answers, the
+                            // original parse runs unchanged and StartTotalizerValid is set. If
+                            // it never answers, advance to Stage 4 anyway so dispensing is never
+                            // blocked, leaving StartTotalizerValid = false.
+                            boolean startTotParsed = false;
                             if (DU_ResponseStr.length() >= 22) {
                                 byte[] resp = hexStringToByteArray(DU_ResponseStr.replace(" ", ""));
                                 byte[] decoded = removeDoubletalk(resp);
@@ -640,10 +789,79 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                             ((decoded[2] & 0xFFL) << 16) | ((decoded[3] & 0xFFL) << 24) |
                                             ((decoded[4] & 0xFFL) << 32);
                                     StartTotalizer = (float) bcdToDouble(totBCD, 2);
+                                    startTotParsed = true;
+                                    StartTotalizerValid = true;
                                     tvLogs.append("\nStart Tot: " + df.format(StartTotalizer));
-                                    ProcessStage = 4;
-                                } else { DU_ResponseStr = ""; requestTotals(); }
-                            } else { DU_ResponseStr = ""; requestTotals(); }
+                                }
+                            }
+
+                            if (startTotParsed) {
+                                ProcessStage = 12;
+                            } else if (StartTotRetryCount < START_TOT_MAX_RETRY) {
+                                StartTotRetryCount++;
+                                // Raw reply logged so the correct A9 format can be identified.
+                                Log.i(TAG, "Stage 3 - A9 reply [" + DU_ResponseStr + "] not totals; retry "
+                                        + StartTotRetryCount + "/" + START_TOT_MAX_RETRY);
+                                DU_ResponseStr = "";
+                                requestTotals();
+                            } else {
+                                StartTotalizer = 0;
+                                StartTotalizerValid = false;
+                                Log.w(TAG, "Stage 3 - Start totalizer unavailable after "
+                                        + START_TOT_MAX_RETRY + " attempts, continuing without it");
+                                tvLogs.append("\nStart Tot N/A - continuing");
+                                ProcessStage = 12;
+                            }
+                            // ===================== FIX (END) =======================
+                        }
+                        // Stage 12: Request Display Data (A1) purely to read the pump's own
+                        // unit price. Runs once, between the start-totalizer read and the
+                        // preset, so the price is known before A5 is ever built.
+                        else if (ProcessStage == 12) {
+                            DU_ResponseStr = "";
+                            ProcessStage = 13;
+                            requestDisplayData();
+                        }
+                        // Stage 13: Parse unit price from the A1 reply.
+                        // A1 layout (after doubletalk removal):
+                        //   bytes 0-1 Price | 2-4 Money | 5-7 Volume | 8 Status   (all BCD, LSB first)
+                        // e.g. 93 20 -> 0x2093 -> 20.93 per litre.
+                        else if (ProcessStage == 13) {
+                            boolean priceParsed = false;
+                            if (DU_ResponseStr.length() >= 6) {
+                                byte[] resp = hexStringToByteArray(DU_ResponseStr.replace(" ", ""));
+                                byte[] decoded = removeDoubletalk(resp);
+                                // A 2-byte status reply (e.g. A0 5F) decodes to length 1 and is
+                                // correctly rejected here, exactly as the A9 totals reply is.
+                                if (decoded != null && decoded.length >= 2
+                                        && isValidBCD(decoded[0]) && isValidBCD(decoded[1])) {
+                                    long priceBCD = (decoded[0] & 0xFFL) | ((decoded[1] & 0xFFL) << 8);
+                                    double p = bcdToDouble(priceBCD, 2);
+                                    if (p > 0 && p <= 999.99) {
+                                        PumpUnitPrice = (float) p;
+                                        PumpUnitPriceValid = true;
+                                        priceParsed = true;
+                                        Log.i(TAG, "Stage 13 - Unit price read from pump: " + df.format(PumpUnitPrice));
+                                        tvLogs.append("\nUnit price: " + df.format(PumpUnitPrice));
+                                    }
+                                }
+                            }
+
+                            if (priceParsed) {
+                                ProcessStage = 4;
+                            } else if (PriceRetryCount < PRICE_MAX_RETRY) {
+                                PriceRetryCount++;
+                                Log.i(TAG, "Stage 13 - A1 reply [" + DU_ResponseStr + "] has no usable price; retry "
+                                        + PriceRetryCount + "/" + PRICE_MAX_RETRY);
+                                DU_ResponseStr = "";
+                                requestDisplayData();
+                            } else {
+                                // NO FALLBACK BY DESIGN. There is no safe default for a unit
+                                // price: authorizing at a value we did not read from the pump
+                                // would bill the customer at a fabricated rate. Stop here.
+                                PumpUnitPriceValid = false;
+                                abortDelivery("Cannot read unit price from pump - aborted");
+                            }
                         }
                         // Stage 4: Set Preset only (authorize will be sent when nozzle is lifted)
                         else if (ProcessStage == 4) {
@@ -654,12 +872,13 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                     try {
                                         int qty = Integer.parseInt(DL_ORDER_QTY);
                                         sendRemotePreset(qty);
-                                        Log.i(TAG, "Stage 4 - Preset sent for " + qty + " L");
+                                        Log.i(TAG, "Stage 4 - Preset sent for " + qty + " L, awaiting confirmation");
                                         finishOrderButton.setText("Hard Stop");
                                         finishOrderButton.setBackgroundColor(Color.DKGRAY);
                                         finishOrderButton.setVisibility(VISIBLE);
-                                        tvFillingStatus.setText("Lift NOZZLE to start dispensing...");
-                                        ProcessStage = 5;
+                                        tvFillingStatus.setText("Setting preset " + qty + " L...");
+                                        // Stage 14 verifies the preset landed before we go on.
+                                        ProcessStage = 14;
                                     } catch (Exception e) {
                                         ProcessStage = 11;
                                         tvFillingStatus.setTextColor(Color.RED);
@@ -669,6 +888,66 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         PolStatus = false;
                                     }
                                 }, 300);
+                            }
+                        }
+                        // Stage 14: Verify the preset was actually accepted, and re-send if not.
+                        // Mirrors Eastman's Stage 5 ACK loop. Confirmation is the FP reaching
+                        // 0xA3 Preset Ready; a 0xB0 ACK is accepted as an interim signal and
+                        // followed by a status poll to confirm the state change.
+                        else if (ProcessStage == 14) {
+                            byte presetStatus = 0;
+                            boolean decodedOk = false;
+                            if (DU_ResponseStr.length() >= 4) {
+                                byte[] resp = hexStringToByteArray(DU_ResponseStr.replace(" ", ""));
+                                byte[] decoded = removeDoubletalk(resp);
+                                if (decoded != null && decoded.length >= 1) {
+                                    presetStatus = decoded[0];
+                                    decodedOk = true;
+                                }
+                            }
+
+                            if (decodedOk && presetStatus == STATUS_PRESET_READY) {
+                                PresetConfirmed = true;
+                                Log.i(TAG, "Stage 14 - Preset CONFIRMED, FP in Preset Ready (0xA3)");
+                                tvLogs.append("\nPreset confirmed (A3)");
+                                tvFillingStatus.setText("Preset " + DL_ORDER_QTY + " L set - Lift NOZZLE...");
+                                DU_ResponseStr = "";
+                                ProcessStage = 5;
+                            } else if (decodedOk && presetStatus == UDC_ACK
+                                    && PresetRetryCount < PRESET_MAX_RETRY) {
+                                // Data accepted. Poll status to see the state actually change.
+                                // Counts against the same budget so a pump that answers 0xB0
+                                // forever falls through to the give-up branch instead of
+                                // spinning here indefinitely.
+                                PresetRetryCount++;
+                                PresetAckSeen = true;
+                                Log.i(TAG, "Stage 14 - Preset ACK (0xB0), polling for Preset Ready ("
+                                        + PresetRetryCount + "/" + PRESET_MAX_RETRY + ")");
+                                DU_ResponseStr = "";
+                                requestStatus();
+                            } else if (PresetRetryCount < PRESET_MAX_RETRY) {
+                                PresetRetryCount++;
+                                Log.i(TAG, "Stage 14 - preset unconfirmed, reply [" + DU_ResponseStr
+                                        + "]; re-send " + PresetRetryCount + "/" + PRESET_MAX_RETRY);
+                                try {
+                                    sendRemotePreset(Integer.parseInt(DL_ORDER_QTY));
+                                } catch (Exception e) {
+                                    Log.e(TAG, "Stage 14 - preset re-send failed: " + e.getMessage());
+                                    DU_ResponseStr = "";
+                                    ProcessStage = 5;
+                                }
+                            } else {
+                                // Deliberately NOT an abort. Unlike the unit price, an unconfirmed
+                                // preset is a display/UX failure, not a correctness one - the A5
+                                // Authorize frame still carries the max volume, so the sale is
+                                // still capped at the ordered quantity. Log it loudly and go on.
+                                PresetConfirmed = false;
+                                Log.w(TAG, "Stage 14 - preset NOT confirmed after " + PRESET_MAX_RETRY
+                                        + " attempts (ACK seen: " + PresetAckSeen + ") - continuing;"
+                                        + " A5 max volume still caps the sale");
+                                tvLogs.append("\nPreset NOT confirmed - continuing (volume still capped)");
+                                DU_ResponseStr = "";
+                                ProcessStage = 5;
                             }
                         }
                         // Stage 5: Wait for Nozzle Lift, then Authorize
@@ -694,18 +973,28 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                     } else if (lastStatusReceived == STATUS_IDLE_HANDLE_UP) {
                                         // Nozzle lifted (A0) - this is a REQUEST for authorization
                                         Log.i(TAG, "Stage 5 - Nozzle LIFTED (A0), sending Authorize command");
-                                        try {
-                                            double price = Double.parseDouble(unitPrice.equals("NA") ? "100" : unitPrice);
-                                            int qty = Integer.parseInt(DL_ORDER_QTY);
-                                            authorize(price, qty);
-                                            IsDispenserAuthorized = true;
-                                            tvFillingStatus.setText("Authorized - Start dispensing...");
-                                            // Move to Stage 6 to monitor fueling
-                                            ProcessStage = 6;
-                                        } catch (Exception e) {
-                                            Log.e(TAG, "Auth error: " + e.getMessage());
-                                            DU_ResponseStr = "";
-                                            requestStatus();
+                                        // Defensive: Stage 13 already gates entry here, but never
+                                        // build an A5 frame without a price read from the pump.
+                                        // NOTE: no early return here - the runnable must reach
+                                        // polhandler.postDelayed() at the end of run(), or the
+                                        // polling loop stops for good and the Finish button
+                                        // (which re-enables PolStatus) would never work again.
+                                        if (!PumpUnitPriceValid || PumpUnitPrice <= 0) {
+                                            abortDelivery("Unit price not verified - cannot authorize");
+                                        } else {
+                                            try {
+                                                double price = PumpUnitPrice;
+                                                int qty = Integer.parseInt(DL_ORDER_QTY);
+                                                authorize(price, qty);
+                                                IsDispenserAuthorized = true;
+                                                tvFillingStatus.setText("Authorized - Start dispensing...");
+                                                // Move to Stage 6 to monitor fueling
+                                                ProcessStage = 6;
+                                            } catch (Exception e) {
+                                                Log.e(TAG, "Auth error: " + e.getMessage());
+                                                DU_ResponseStr = "";
+                                                requestStatus();
+                                            }
                                         }
                                     } else if (lastStatusReceived == STATUS_AUTHORIZED) {
                                         // Already authorized (90), waiting for valves to open
@@ -714,7 +1003,13 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         IsDispenserAuthorized = true;
                                         ProcessStage = 6;
                                     } else if (lastStatusReceived == STATUS_PRESET_READY) {
-                                        // Preset ready (A3) - can send preset data if needed
+                                        // REVERTED to the known-good production behaviour.
+                                        // Do NOT authorize from Preset Ready (0xA3): the working
+                                        // build only ever sent A5 on 0xA0 (handle up), and presets
+                                        // displayed correctly. Authorizing here fires A5 while the
+                                        // nozzle is still on the hook and marks the FP authorized
+                                        // without checking the pump's reply, so a rejected A5
+                                        // becomes invisible and unrecoverable.
                                         Log.i(TAG, "Stage 5 - Preset ready (A3), waiting for nozzle lift");
                                         DU_ResponseStr = "";
                                         requestStatus();
@@ -818,6 +1113,12 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         Log.i(TAG, "Stage 7 - Authorized, waiting for valves to open");
                                         ProcessStage = 6;
                                     } else if (lastStatusReceived == STATUS_IDLE_HANDLE_DOWN || lastStatusReceived == STATUS_IDLE_HANDLE_UP) {
+                                        // REVERTED to the known-good production behaviour.
+                                        // The 0 L guard only existed to compensate for the Stage 5
+                                        // A3-authorize path (now removed), which could enter Stage 7
+                                        // with the nozzle still down. With that gone the guard is
+                                        // dead weight, and it risks hanging completion if the pump
+                                        // blanks its volume display when the nozzle is re-hooked.
                                         // Fueling complete - nozzle returned (20 or A0)
                                         Log.i(TAG, "Stage 7 - Fueling COMPLETE! Status: " + getStatusDescription(lastStatusReceived) + " - Moving to Stage 8");
                                         ProcessStage = 8;
@@ -864,6 +1165,18 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                         }
                         // Stage 8: Read End Totalizer
                         else if (ProcessStage == 8) {
+                            // ===================== FIX (START) =====================
+                            // BEFORE: both failure branches were
+                            //   else { DU_ResponseStr = ""; requestTotals(); }
+                            // with no retry cap. Because this pump answers A9 with a 2-byte
+                            // status instead of totalizer data, the ">= 22" check never passed
+                            // and Stage 8 re-sent A9 forever: the order was never saved to the
+                            // DB, "Finish" never appeared, and polling never stopped.
+                            // AFTER: try A9 up to END_TOT_MAX_RETRY times. If totals arrive the
+                            // original totalizer path runs exactly as before. If they never
+                            // arrive, fall back to volumeFloat (the A1-derived volume already
+                            // shown on screen) and complete the order normally.
+                            boolean endTotParsed = false;
                             if (DU_ResponseStr.length() >= 22) {
                                 byte[] resp = hexStringToByteArray(DU_ResponseStr.replace(" ", ""));
                                 byte[] decoded = removeDoubletalk(resp);
@@ -872,32 +1185,59 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                             ((decoded[2] & 0xFFL) << 16) | ((decoded[3] & 0xFFL) << 24) |
                                             ((decoded[4] & 0xFFL) << 32);
                                     EndTotalizer = (float) bcdToDouble(totBCD, 2);
-                                    volumeFloatFinal = EndTotalizer - StartTotalizer;
-                                    if (volumeFloatFinal >= 0) {
-                                        volumeFloat = volumeFloatFinal;
-                                        tvFillingStatus.setText("Qty: " + df.format(volumeFloatFinal) + " L | Tot: " +
-                                                df.format(StartTotalizer) + " / " + df.format(EndTotalizer));
-                                    } else {
-                                        volumeFloatFinal = volumeFloat;
-                                        tvFillingStatus.setText("Qty: " + df.format(volumeFloatFinal) + " L");
-                                    }
-                                    OrderData orderData = new OrderData();
-                                    orderData.setOrderNo(DL_ORDER_NO);
-                                    orderData.setOtp(DL_OTP);
-                                    orderData.setorderQty(DL_ORDER_QTY);
-                                    orderData.setRfidTag(DL_RFID_TAG);
-                                    orderData.setDecantQty(df.format(volumeFloat));
-                                    orderData.setSkipAuthentication("Y");
-                                    helper.insertOrderData(orderData);
-                                    DispensingStarted = false;
-                                    DispensingCompleted = true;
-                                    finishOrderButton.setText("Finish");
-                                    finishOrderButton.setTextColor(Color.BLACK);
-                                    finishOrderButton.setBackgroundColor(Color.CYAN);
-                                    finishOrderButton.setVisibility(VISIBLE);
-                                    PolStatus = false;
-                                } else { DU_ResponseStr = ""; requestTotals(); }
-                            } else { DU_ResponseStr = ""; requestTotals(); }
+                                    endTotParsed = true;
+                                    EndTotalizerValid = true;
+                                }
+                            }
+
+                            if (!endTotParsed && EndTotRetryCount < END_TOT_MAX_RETRY) {
+                                EndTotRetryCount++;
+                                Log.i(TAG, "Stage 8 - A9 reply [" + DU_ResponseStr + "] not totals; retry "
+                                        + EndTotRetryCount + "/" + END_TOT_MAX_RETRY);
+                                DU_ResponseStr = "";
+                                requestTotals();
+                            } else {
+                                if (!endTotParsed) {
+                                    EndTotalizer = 0;
+                                    EndTotalizerValid = false;
+                                    Log.w(TAG, "Stage 8 - End totalizer unavailable after "
+                                            + END_TOT_MAX_RETRY + " attempts");
+                                }
+                                volumeFloatFinal = EndTotalizer - StartTotalizer;
+                                // Only trust the totalizer difference when BOTH readings are
+                                // genuine, otherwise EndTotalizer - 0 would report the pump's
+                                // lifetime total as the delivered quantity. Falls through to the
+                                // existing volumeFloat (A1-derived) fallback.
+                                if (totalizersUsable() && volumeFloatFinal >= 0) {
+                                    volumeFloat = volumeFloatFinal;
+                                    tvFillingStatus.setText("Qty: " + df.format(volumeFloatFinal) + " L | Tot: " +
+                                            df.format(StartTotalizer) + " / " + df.format(EndTotalizer));
+                                } else {
+                                    volumeFloatFinal = volumeFloat;
+                                    tvFillingStatus.setText("Qty: " + df.format(volumeFloatFinal) + " L");
+                                }
+                                OrderData orderData = new OrderData();
+                                orderData.setOrderNo(DL_ORDER_NO);
+                                orderData.setOtp(DL_OTP);
+                                orderData.setorderQty(DL_ORDER_QTY);
+                                orderData.setRfidTag(DL_RFID_TAG);
+                                orderData.setDecantQty(df.format(volumeFloat));
+                                // Persist the same values the callback will carry, so the
+                                // "Re-send to App" path replays an identical payload instead of
+                                // writing null into the startTotalizer/endTotalizer columns.
+                                orderData.setStartTotalizer(startTotForCallback());
+                                orderData.setEndTotalizer(endTotForCallback());
+                                orderData.setSkipAuthentication("Y");
+                                helper.insertOrderData(orderData);
+                                DispensingStarted = false;
+                                DispensingCompleted = true;
+                                finishOrderButton.setText("Finish");
+                                finishOrderButton.setTextColor(Color.BLACK);
+                                finishOrderButton.setBackgroundColor(Color.CYAN);
+                                finishOrderButton.setVisibility(VISIBLE);
+                                PolStatus = false;
+                            }
+                            // ===================== FIX (END) =======================
                         }
                         // Stage 9: Paused
                         else if (ProcessStage == 9) {
