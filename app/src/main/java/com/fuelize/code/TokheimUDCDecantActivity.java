@@ -73,7 +73,12 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     private static final byte FC_REQUEST_TOTALS = (byte) 0xA9;
     private static final byte FC_EXTENDED_AB = (byte) 0xAB;
     private static final byte FC_AB_PRE_AUTHORIZE = 0x01;
-    private static final byte FC_AB_REMOTE_PRESET = 0x26;
+    private static final byte FC_AB_REMOTE_PRESET = 0x26;   // NOTE: not a real UDC command; no longer used
+
+    // A5 Authorize "slow flow offset" byte. The UDC spec example uses 05 - the small
+    // volume before the preset at which the pump switches to slow flow for an accurate
+    // cut-off. Tune here if the pump overshoots or stops short of the ordered quantity.
+    private static final byte SLOW_FLOW_OFFSET = 0x05;
 
     // Status Bytes (from UDC Protocol Specification)
     // Normal dispenser status bytes - when status doesn't match, evaluate specific bits
@@ -121,6 +126,9 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     int RFIDConnectCounter = 0;
 
     String DU_ResponseStr = "";
+    // Last preset (AB 26) frame sent, shown in the on-screen failure Toast/log so the
+    // exact bytes and the pump's reply can be captured and sent for diagnosis.
+    String lastPresetTxHex = "";
     public static String crmNumber = "NA";
     public static String order_qty = "NA";
     // NOTE: the former "unitPrice" static was removed. It was never assigned by
@@ -467,26 +475,78 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
 
     private void sendRemotePreset(double volume) {
         try {
-            int volInt = (int) (volume * 100);
-            byte[] data = new byte[]{0, 0, 0, 0, (byte)(volInt & 0xFF), (byte)((volInt >> 8) & 0xFF),
-                    (byte)((volInt >> 16) & 0xFF), (byte)((volInt >> 24) & 0xFF)};
-//            sendUDCCommandWithData(FC_AB_REMOTE_PRESET, data);
+            // The preset value must be encoded the SAME way as every other numeric field
+            // this class sends/parses over UDC - BCD, LSB first. authorize() already sends
+            // its volume this way (intToBCD, below), and the totalizers / unit price are
+            // decoded as BCD (bcdToDouble). The preset was the ONLY field packed as raw
+            // little-endian binary (e.g. 2 L -> 0xC8), which a BCD-expecting DU rejects -
+            // that is why it never displayed. Now identical to authorize()'s volume field.
+            int volInt = (int) Math.round(volume * 100);   // 2.0 L -> 200 ; 2.5 L -> 250
+            byte v0 = intToBCD(volInt % 100);              // hundredths (0.01 L)
+            byte v1 = intToBCD((volInt / 100) % 100);      // units
+            byte v2 = intToBCD((volInt / 10000) % 100);    // hundreds
+            byte v3 = intToBCD((volInt / 1000000) % 100);  // ten-thousands
+            byte[] data = new byte[]{0, 0, 0, 0, v0, v1, v2, v3};
+            lastPresetTxHex = "F0 AB 26 " + bytesToHex(data);   // logical frame (before doubletalk)
             sendUDCExtendedCommand(FC_EXTENDED_AB, FC_AB_REMOTE_PRESET, data);
+            Log.i(TAG, "PRESET TX (AB 26) volume=" + volume + " L volInt=" + volInt
+                    + " BCD-payload=[" + bytesToHex(data) + "]");
             tvLogs.setText("Cmd: PRESET (AB 26) - " + volume + " L");
         } catch (Exception e) { Log.e(TAG, "Preset error: " + e.getMessage()); }
     }
 
+    /**
+     * A5 - Authorize fueling point, per the UDC spec (Columbia extract, "A5 - AUTHORIZE
+     * FUELING POINT"). This is where the PRESET lives in UDC - there is no separate
+     * preset command. The command carries the maximum-delivery VOLUME limit; the pump
+     * enforces it and stops the fill at that quantity.
+     *
+     * Frame (14 logical bytes -> 28 with doubletalk = spec "SEND LENGTH 28 bytes"):
+     *   Fx A5 [SlowFlowOffset:1]
+     *         [Price/Unit Vol : 3 BCD LSB-first, PPP.PP]
+     *         [Max delivery Money : 4 BCD LSB-first, MMMMM.MM]
+     *         [Max delivery Volume: 4 BCD LSB-first, VVVVV.VV]   <-- the preset
+     * Verified against the doc example (price 005.69 -> 69 05 00,
+     * money 81619.88 -> 88 19 16 08, volume 14337.88 -> 88 37 43 01).
+     *
+     * BUG BEFORE THIS FIX: the Max-delivery MONEY field was hardcoded to 00 00 00 00.
+     * A money limit of 0.00 means "stop at zero delivered", so the authorization never
+     * allowed a real fill. It is now set above volume x price, so the VOLUME limit is
+     * the binding preset.
+     */
     private void authorize(double price, double maxVolume) {
         try {
-            byte sfo = 0x20;
-            int priceInt = (int) (price * 100);
-            byte pLsb = intToBCD(priceInt % 100), p2sb = intToBCD((priceInt / 100) % 100), pMsb = intToBCD((priceInt / 10000) % 100);
-            int volInt = (int) (maxVolume * 100);
-            byte vLsb = intToBCD(volInt % 100), v2sb = intToBCD((volInt / 100) % 100);
-            byte v3sb = intToBCD((volInt / 10000) % 100), vMsb = intToBCD((volInt / 1000000) % 100);
-            byte[] data = new byte[]{sfo, pLsb, p2sb, pMsb, 0, 0, 0, 0, vLsb, v2sb, v3sb, vMsb};
+            byte sfo = SLOW_FLOW_OFFSET;                       // spec example uses 05
+
+            // Price/Unit Volume - PPP.PP, 3 BCD bytes, LSB first.
+            int priceInt = (int) Math.round(price * 100);
+            byte pLsb = intToBCD(priceInt % 100),
+                 p2sb = intToBCD((priceInt / 100) % 100),
+                 pMsb = intToBCD((priceInt / 10000) % 100);
+
+            // Max delivery MONEY - MMMMM.MM, 4 BCD bytes, LSB first. Set comfortably
+            // above (volume x price) so the VOLUME limit below is what actually stops
+            // the sale; capped at the field maximum 99999.99.
+            double moneyLimit = Math.min(99999.99, maxVolume * price + 100.0);
+            long moneyInt = Math.round(moneyLimit * 100);
+            byte mLsb = intToBCD((int) (moneyInt % 100)),
+                 m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
+                 m3sb = intToBCD((int) ((moneyInt / 10000) % 100)),
+                 mMsb = intToBCD((int) ((moneyInt / 1000000) % 100));
+
+            // Max delivery VOLUME - VVVVV.VV, 4 BCD bytes, LSB first = THE PRESET.
+            int volInt = (int) Math.round(maxVolume * 100);
+            byte vLsb = intToBCD(volInt % 100),
+                 v2sb = intToBCD((volInt / 100) % 100),
+                 v3sb = intToBCD((volInt / 10000) % 100),
+                 vMsb = intToBCD((volInt / 1000000) % 100);
+
+            byte[] data = new byte[]{sfo, pLsb, p2sb, pMsb, mLsb, m2sb, m3sb, mMsb, vLsb, v2sb, v3sb, vMsb};
             sendUDCCommandWithData(FC_AUTHORIZE, data);
-            tvLogs.setText("Cmd: AUTHORIZE (A5) - " + maxVolume + " L");
+            Log.i(TAG, "A5 AUTHORIZE price=" + price + " preset(maxVol)=" + maxVolume
+                    + " L maxMoney=" + moneyLimit + " data=[F0 A5 " + bytesToHex(data) + "]");
+            tvLogs.append("\nA5 AUTHORIZE preset " + maxVolume + " L [F0 A5 " + bytesToHex(data) + "]");
+            tvLogs.setText("Cmd: AUTHORIZE (A5) - preset " + maxVolume + " L");
         } catch (Exception e) { Log.e(TAG, "Auth error: " + e.getMessage()); }
     }
 
@@ -558,6 +618,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
         tvFillingStatus.setTextColor(Color.RED);
         tvFillingStatus.setText(reason);
         tvLogs.append("\nABORT: " + reason);
+        Toast.makeText(mContext, "MDU error: " + reason, Toast.LENGTH_LONG).show();
         finishOrderButton.setText("Close");
         finishOrderButton.setBackgroundColor(Color.RED);
         finishOrderButton.setVisibility(VISIBLE);
@@ -848,7 +909,14 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                             }
 
                             if (priceParsed) {
-                                ProcessStage = 4;
+                                // Go straight to Stage 5 (wait for handle-up, then A5 Authorize).
+                                // The old Stage 4 sent a fictional AB 26 "preset" command that the
+                                // pump ignored (no reply). In UDC there is no separate preset - the
+                                // fill limit is carried by the A5 Authorize command (see authorize()).
+                                tvFillingStatus.setText("Lift NOZZLE to dispense " + DL_ORDER_QTY + " L...");
+                                DU_ResponseStr = "";     // drop the A1 price reply
+                                ProcessStage = 5;
+                                requestStatus();         // fresh status for Stage 5 to evaluate
                             } else if (PriceRetryCount < PRICE_MAX_RETRY) {
                                 PriceRetryCount++;
                                 Log.i(TAG, "Stage 13 - A1 reply [" + DU_ResponseStr + "] has no usable price; retry "
@@ -870,7 +938,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 IsPreAuthorized = true;
                                 handler.postDelayed(() -> {
                                     try {
-                                        int qty = Integer.parseInt(DL_ORDER_QTY);
+                                        double qty = Double.parseDouble(DL_ORDER_QTY.trim());   // accepts 2 and 2.5
                                         sendRemotePreset(qty);
                                         Log.i(TAG, "Stage 4 - Preset sent for " + qty + " L, awaiting confirmation");
                                         finishOrderButton.setText("Hard Stop");
@@ -930,24 +998,32 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 Log.i(TAG, "Stage 14 - preset unconfirmed, reply [" + DU_ResponseStr
                                         + "]; re-send " + PresetRetryCount + "/" + PRESET_MAX_RETRY);
                                 try {
-                                    sendRemotePreset(Integer.parseInt(DL_ORDER_QTY));
+                                    sendRemotePreset(Double.parseDouble(DL_ORDER_QTY.trim()));
                                 } catch (Exception e) {
                                     Log.e(TAG, "Stage 14 - preset re-send failed: " + e.getMessage());
                                     DU_ResponseStr = "";
                                     ProcessStage = 5;
                                 }
                             } else {
-                                // Deliberately NOT an abort. Unlike the unit price, an unconfirmed
-                                // preset is a display/UX failure, not a correctness one - the A5
-                                // Authorize frame still carries the max volume, so the sale is
-                                // still capped at the ordered quantity. Log it loudly and go on.
+                                // Preset could not be confirmed. Surface the exact bytes on screen
+                                // (Toast + persistent status + log) so they can be captured and sent
+                                // for diagnosis, and STOP here so the message stays on screen.
                                 PresetConfirmed = false;
-                                Log.w(TAG, "Stage 14 - preset NOT confirmed after " + PRESET_MAX_RETRY
-                                        + " attempts (ACK seen: " + PresetAckSeen + ") - continuing;"
-                                        + " A5 max volume still caps the sale");
-                                tvLogs.append("\nPreset NOT confirmed - continuing (volume still capped)");
+                                String reply = DU_ResponseStr.trim().isEmpty() ? "(no reply)" : DU_ResponseStr.trim();
+                                String diag = "PRESET FAILED (" + DL_ORDER_QTY + " L)"
+                                        + "\nSent: " + lastPresetTxHex
+                                        + "\nPump reply: " + reply
+                                        + "\nNot confirmed after " + PRESET_MAX_RETRY + " tries (ACK seen: " + PresetAckSeen + ")";
+                                Log.w(TAG, "Stage 14 - " + diag.replace("\n", " | "));
+                                tvLogs.append("\n===== " + diag + " =====");
+                                Toast.makeText(mContext, diag, Toast.LENGTH_LONG).show();
+                                tvFillingStatus.setTextColor(Color.RED);
+                                tvFillingStatus.setText("Preset NOT set. Sent " + lastPresetTxHex + " | reply " + reply);
+                                finishOrderButton.setText("Close");
+                                finishOrderButton.setVisibility(VISIBLE);
+                                PolStatus = false;      // stop so the error stays on screen to capture
+                                ProcessStage = 11;
                                 DU_ResponseStr = "";
-                                ProcessStage = 5;
                             }
                         }
                         // Stage 5: Wait for Nozzle Lift, then Authorize
@@ -984,7 +1060,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         } else {
                                             try {
                                                 double price = PumpUnitPrice;
-                                                int qty = Integer.parseInt(DL_ORDER_QTY);
+                                                double qty = Double.parseDouble(DL_ORDER_QTY.trim());   // accepts 2 and 2.5
                                                 authorize(price, qty);
                                                 IsDispenserAuthorized = true;
                                                 tvFillingStatus.setText("Authorized - Start dispensing...");
