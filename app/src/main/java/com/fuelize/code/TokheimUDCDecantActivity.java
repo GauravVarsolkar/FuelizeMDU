@@ -80,6 +80,20 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     // cut-off. Tune here if the pump overshoots or stops short of the ordered quantity.
     private static final byte SLOW_FLOW_OFFSET = 0x05;
 
+    // Show the ordered quantity on the PUMP's own display before the nozzle is lifted,
+    // using the A6 "Send Data for Main Displays" command (volume field = preset). Per the
+    // UDC spec this updates the idle display only if the pump is programmed to allow it,
+    // so it is best-effort. Set false to disable without affecting the working A5 flow.
+    private static final boolean SHOW_PRESET_ON_PUMP = true;
+    // Extra "show the preset on the pump" method: reset the fueling point (A7) so it goes
+    // uninitialised (0x2F), then send A6 - per the UDC spec, A6 to a 0x2F point UNCONDITIONALLY
+    // writes money/volume/price to the display (unlike an already-initialised point, which only
+    // does so if programmed for "price change with handle up"). A 0x2F handler in Stage 5 both
+    // shows the value and recovers the pump to idle. This is the more aggressive method - if the
+    // pump ever misbehaves, set this to false; the A6-only methods above still run.
+    private static final boolean TRY_RESET_THEN_A6 = true;
+    private static final byte FC_RESET_FP = (byte) 0xA7;   // Reset fueling point
+
     // Status Bytes (from UDC Protocol Specification)
     // Normal dispenser status bytes - when status doesn't match, evaluate specific bits
     private static final byte STATUS_UNINITIALIZED = 0x2F;          // Requires A6 main display data
@@ -129,6 +143,13 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     // Last preset (AB 26) frame sent, shown in the on-screen failure Toast/log so the
     // exact bytes and the pump's reply can be captured and sent for diagnosis.
     String lastPresetTxHex = "";
+    // Last A6 (Send Data for Main Displays) frame sent, and a small retry budget for the
+    // A6-reply diagnostic (Stage 15), so the exact bytes and the pump's reply can be
+    // captured in the on-screen log to see why the preset volume is / isn't displayed.
+    String lastA6TxHex = "";
+    int A6DiagRetry = 0;
+    // Counter for refreshing the A6 preset display while the nozzle is down (idle wait).
+    int a6RefreshTick = 0;
     public static String crmNumber = "NA";
     public static String order_qty = "NA";
     // NOTE: the former "unitPrice" static was removed. It was never assigned by
@@ -550,6 +571,87 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
         } catch (Exception e) { Log.e(TAG, "Auth error: " + e.getMessage()); }
     }
 
+    /**
+     * A6 - Send Data for Fueling Point Main Displays (UDC spec, "A6 - SEND DATA FOR
+     * FUELING POINT MAIN DISPLAYS"). Used here to show the ORDERED QUANTITY on the pump's
+     * own display BEFORE the nozzle is lifted, so the customer sees how much will be
+     * dispensed. This does not authorize or start anything - it only writes the display.
+     *
+     * Frame (13 logical bytes -> 26 with doubletalk = spec "SEND LENGTH 26 bytes"):
+     *   Fx A6 [Price/Unit Vol: 3 BCD LSB-first, PPP.PP]
+     *         [Money : 4 BCD LSB-first, MMMMM.MM]
+     *         [Volume: 4 BCD LSB-first, VVVVV.VV]   <-- shows the preset quantity
+     * Same BCD encoding verified against the A5/A6 doc examples.
+     *
+     * NOTE: per the spec the pump updates its idle display from A6 only if it is
+     * programmed to allow it, so this is best-effort. Guarded by SHOW_PRESET_ON_PUMP.
+     */
+    private void sendPresetDisplay(double volume) {
+        try {
+            double price = PumpUnitPriceValid ? PumpUnitPrice : 0.0;
+            double money = Math.min(99999.99, volume * price);   // shows expected amount too
+
+            int priceInt = (int) Math.round(price * 100);
+            byte pLsb = intToBCD(priceInt % 100),
+                 p2sb = intToBCD((priceInt / 100) % 100),
+                 pMsb = intToBCD((priceInt / 10000) % 100);
+
+            long moneyInt = Math.round(money * 100);
+            byte mLsb = intToBCD((int) (moneyInt % 100)),
+                 m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
+                 m3sb = intToBCD((int) ((moneyInt / 10000) % 100)),
+                 mMsb = intToBCD((int) ((moneyInt / 1000000) % 100));
+
+            int volInt = (int) Math.round(volume * 100);
+            byte vLsb = intToBCD(volInt % 100),
+                 v2sb = intToBCD((volInt / 100) % 100),
+                 v3sb = intToBCD((volInt / 10000) % 100),
+                 vMsb = intToBCD((volInt / 1000000) % 100);
+
+            byte[] data = new byte[]{pLsb, p2sb, pMsb, mLsb, m2sb, m3sb, mMsb, vLsb, v2sb, v3sb, vMsb};
+            lastA6TxHex = "F0 A6 " + bytesToHex(data);   // logical frame (before doubletalk)
+            sendUDCCommandWithData(FC_SEND_DISPLAY_DATA, data);   // A6
+            Log.i(TAG, "A6 PRESET-DISPLAY vol=" + volume + " L money=" + money
+                    + " data=[F0 A6 " + bytesToHex(data) + "]");
+            tvLogs.append("\nA6 preset-display " + volume + " L [F0 A6 " + bytesToHex(data) + "]");
+        } catch (Exception e) { Log.e(TAG, "A6 preset-display error: " + e.getMessage()); }
+    }
+
+    /** A7 - Reset fueling point. Used only by the reset-then-A6 display method. */
+    private void sendReset() {
+        sendUDCCommand(FC_RESET_FP);
+        Log.i(TAG, "RESET TX (A7)");
+        tvLogs.append("\nA7 RESET (for preset-display method 3)");
+    }
+
+    /**
+     * Fire ALL the "show the preset on the pump display" methods in one go, before the nozzle
+     * is lifted. Each is independent and none touches the authorize/fueling/stop flow:
+     *   Method 1: A6 now (plain display push).
+     *   Method 2: A6 refresh - handled continuously by Stage 5's idle-down branch.
+     *   Method 3: A7 reset -> A6 (forces 0x2F so A6 unconditionally writes the display; the
+     *             Stage 5 0x2F handler shows it and recovers the pump to idle).
+     * Polling is paused for the ~2 s reset sequence so it is not interleaved with status polls,
+     * then resumed into the normal wait-for-lift flow.
+     */
+    private void tryAllPresetDisplayMethods(double vol) {
+        // Method 1 - plain A6 right now.
+        sendPresetDisplay(vol);
+        if (!TRY_RESET_THEN_A6) {
+            requestStatus();
+            return;
+        }
+        // Method 3 - reset then A6, sequenced with polling paused to avoid bus collisions.
+        PolStatus = false;
+        new Handler().postDelayed(() -> sendReset(), 500);
+        new Handler().postDelayed(() -> { try { sendPresetDisplay(vol); } catch (Exception e) { } }, 1200);
+        new Handler().postDelayed(() -> {
+            DU_ResponseStr = "";
+            PolStatus = true;      // resume normal wait-for-lift polling (Stage 5)
+            requestStatus();
+        }, 1900);
+    }
+
     // Doubletalk encoding
     private byte[] applyDoubletalk(byte[] data) {
         byte[] result = new byte[data.length * 2];
@@ -913,10 +1015,28 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 // The old Stage 4 sent a fictional AB 26 "preset" command that the
                                 // pump ignored (no reply). In UDC there is no separate preset - the
                                 // fill limit is carried by the A5 Authorize command (see authorize()).
-                                tvFillingStatus.setText("Lift NOZZLE to dispense " + DL_ORDER_QTY + " L...");
+                                // Tablet shows the preset prominently (guaranteed).
+                                tvFillingStatus.setText("PRESET " + DL_ORDER_QTY + " L  -  Lift NOZZLE to dispense");
                                 DU_ResponseStr = "";     // drop the A1 price reply
+                                // Best-effort: push the ordered quantity to the PUMP's own
+                                // display via A6 before the nozzle is lifted. When sent, go to
+                                // Stage 15 which captures & logs the pump's reply (diagnostic),
+                                // then proceeds to Stage 5 unchanged. If disabled/failed, go
+                                // straight to Stage 5.
+                                boolean a6Sent = false;
+                                a6RefreshTick = 0;
                                 ProcessStage = 5;
-                                requestStatus();         // fresh status for Stage 5 to evaluate
+                                if (SHOW_PRESET_ON_PUMP) {
+                                    try {
+                                        // Fire ALL preset-display methods (A6, and reset->A6).
+                                        // Method handles its own polling pause/resume + status poll.
+                                        tryAllPresetDisplayMethods(Double.parseDouble(DL_ORDER_QTY.trim()));
+                                        a6Sent = true;
+                                    } catch (Exception ignore) { }
+                                }
+                                // Stage 5 then keeps refreshing the A6 display while the nozzle
+                                // is down, and authorizes on lift (unchanged).
+                                if (!a6Sent) requestStatus();   // tryAll() issues its own poll
                             } else if (PriceRetryCount < PRICE_MAX_RETRY) {
                                 PriceRetryCount++;
                                 Log.i(TAG, "Stage 13 - A1 reply [" + DU_ResponseStr + "] has no usable price; retry "
@@ -1026,6 +1146,78 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 DU_ResponseStr = "";
                             }
                         }
+                        // Stage 15: A6 PRESET-DISPLAY DIAGNOSTIC. Captures the pump's reply to
+                        // the A6 "Send Data for Main Displays" command and prints a detailed
+                        // message in the command/log area, so we can see why the preset volume
+                        // is / isn't appearing on the dispenser. Waits a couple of ticks for the
+                        // reply, logs once, then proceeds to Stage 5 (nozzle-lift -> A5) unchanged.
+                        else if (ProcessStage == 15) {
+                            String raw = DU_ResponseStr.trim();
+                            if (raw.isEmpty() && A6DiagRetry < 2) {
+                                // Give the A6 reply time to arrive before deciding "no reply".
+                                A6DiagRetry++;
+                                Log.i(TAG, "Stage 15 - awaiting A6 reply (" + A6DiagRetry + "/2)");
+                            } else {
+                                String decodedStr = "(none)";
+                                String interp;
+                                if (raw.isEmpty()) {
+                                    interp = "NO REPLY - the pump did not answer the A6 command. It is "
+                                           + "most likely not programmed to accept main-display data "
+                                           + "over A6 while idle, so the Volume window cannot be "
+                                           + "pre-filled before nozzle-lift.";
+                                } else {
+                                    byte[] resp = hexStringToByteArray(raw.replace(" ", ""));
+                                    byte[] decoded = removeDoubletalk(resp);
+                                    if (decoded != null && decoded.length >= 1) {
+                                        byte st = decoded[0];
+                                        decodedStr = "0x" + String.format("%02X", st)
+                                                + " (" + getStatusDescription(st) + ")";
+                                        if (st == STATUS_IDLE_HANDLE_DOWN || st == 0x24) {
+                                            interp = "Pump ACCEPTED A6 (status " + decodedStr + "). The "
+                                                   + "display data was taken - if the Volume window is "
+                                                   + "still blank, this pump's firmware does not render "
+                                                   + "A6 volume while idle.";
+                                        } else if (st == STATUS_UNINITIALIZED) {
+                                            interp = "Pump returned 0x2F (uninitialised) to A6 - it needs "
+                                                   + "initialising before it will show display data.";
+                                        } else {
+                                            interp = "Pump replied status " + decodedStr + " (not 20/24) to "
+                                                   + "A6 - it did not update the display in this state.";
+                                        }
+                                    } else {
+                                        interp = "Reply could not be doubletalk-decoded: [" + raw + "]";
+                                    }
+                                }
+                                String diag = "===== A6 PRESET-DISPLAY DIAGNOSTIC =====\n"
+                                        + "Order qty : " + DL_ORDER_QTY + " L\n"
+                                        + "A6 sent   : " + lastA6TxHex + "\n"
+                                        + "Pump reply: " + (raw.isEmpty() ? "(no reply)" : raw) + "\n"
+                                        + "Decoded   : " + decodedStr + "\n"
+                                        + interp + "\n"
+                                        + "========================================";
+                                Log.w(TAG, "Stage 15 - " + diag.replace("\n", " | "));
+                                // tvLogs is a single-line display (every command calls setText and
+                                // wipes it), so FREEZE the flow for 20 s with the full diagnostic on
+                                // screen to photograph, then auto-resume the (working) authorize flow.
+                                tvLogs.setText(diag);
+                                Toast.makeText(mContext, diag, Toast.LENGTH_LONG).show();
+                                tvFillingStatus.setTextColor(Color.BLUE);
+                                tvFillingStatus.setText("A6 DIAGNOSTIC (screenshot the log below) - "
+                                        + "resuming in 20s\nA6 reply: "
+                                        + (raw.isEmpty() ? "(NO REPLY)" : raw) + "  status " + decodedStr);
+                                DU_ResponseStr = "";
+                                PolStatus = false;       // freeze so the log stays for the screenshot
+                                new Handler().postDelayed(() -> {
+                                    tvFillingStatus.setTextColor(Color.BLACK);
+                                    tvFillingStatus.setText("PRESET " + DL_ORDER_QTY
+                                            + " L  -  Lift NOZZLE to dispense");
+                                    DU_ResponseStr = "";
+                                    ProcessStage = 5;    // continue to the (working) authorize flow
+                                    PolStatus = true;
+                                    requestStatus();
+                                }, 20000);
+                            }
+                        }
                         // Stage 5: Wait for Nozzle Lift, then Authorize
                         else if (ProcessStage == 5) {
                             // Check if we already have a response to process
@@ -1089,11 +1281,38 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         Log.i(TAG, "Stage 5 - Preset ready (A3), waiting for nozzle lift");
                                         DU_ResponseStr = "";
                                         requestStatus();
+                                    } else if (lastStatusReceived == STATUS_UNINITIALIZED) {
+                                        // 0x2F (uninitialised) - normally only seen here right after
+                                        // the A7 reset display-attempt. Sending A6 now both writes
+                                        // the preset to the display (spec: A6 to a 0x2F point sends
+                                        // money/volume/price) AND re-initialises the pump to idle
+                                        // (0x20), so the normal wait-for-lift flow resumes cleanly.
+                                        Log.i(TAG, "Stage 5 - FP 0x2F, A6 (display preset + re-init)");
+                                        DU_ResponseStr = "";
+                                        if (SHOW_PRESET_ON_PUMP) {
+                                            try { sendPresetDisplay(Double.parseDouble(DL_ORDER_QTY.trim())); }
+                                            catch (Exception e) { sendDisplayDataForInit(); }
+                                        } else {
+                                            sendDisplayDataForInit();
+                                        }
                                     } else if (lastStatusReceived == STATUS_IDLE_HANDLE_DOWN) {
-                                        // Nozzle still down (20), keep polling
+                                        // Nozzle still down (20), keep waiting for lift. Also keep
+                                        // RE-SENDING the preset to the pump display via A6 every
+                                        // other idle tick, so a pump that only shows it briefly
+                                        // holds it. Alternated with the status poll so handle-up is
+                                        // still detected promptly. This runs ONLY in the idle/wait
+                                        // state - the authorize / fueling / auto-stop logic is
+                                        // completely untouched.
                                         Log.i(TAG, "Stage 5 - Nozzle down, waiting for lift...");
                                         DU_ResponseStr = "";
-                                        requestStatus();
+                                        a6RefreshTick++;
+                                        if (SHOW_PRESET_ON_PUMP && (a6RefreshTick % 2 == 0)) {
+                                            try {
+                                                sendPresetDisplay(Double.parseDouble(DL_ORDER_QTY.trim()));
+                                            } catch (Exception e) { requestStatus(); }
+                                        } else {
+                                            requestStatus();
+                                        }
                                     } else if (lastStatusReceived == STATUS_DISPENSER_ERROR) {
                                         // Dispenser error (A2)
                                         Log.e(TAG, "Stage 5 - DISPENSER ERROR (A2)!");
