@@ -1000,7 +1000,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         && isValidBCD(decoded[0]) && isValidBCD(decoded[1])) {
                                     long priceBCD = (decoded[0] & 0xFFL) | ((decoded[1] & 0xFFL) << 8);
                                     double p = bcdToDouble(priceBCD, 2);
-                                    if (p > 0 && p <= 999.99) {
+                                    if (p > 0 && p <= 99999.99) {
                                         PumpUnitPrice = (float) p;
                                         PumpUnitPriceValid = true;
                                         priceParsed = true;
@@ -1377,11 +1377,24 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                     }
                                     Log.i(TAG, "Stage 7 - Decoded bytes: " + sb.toString());
 
-                                    // Parse Volume (bytes 5-7, BCD LSB first) as volume indicator
-
-                                    long volumeBCD = (decoded[5] & 0xFFL) |
-                                            ((decoded[6] & 0xFFL) << 8) |
-                                            ((decoded[7] & 0xFFL) << 16);
+                                    // Parse Volume. The A1 reply mirrors the A6 SEND layout this app
+                                    // already uses: Price[3] + Money[4] + Volume[4] + Status[1] = 12
+                                    // bytes. Volume is 4 BCD bytes, LSB first, at offset 7. The old
+                                    // code assumed a 9-byte layout and read bytes 5-7, which landed on
+                                    // the wrong bytes of this pump's 12-byte frame and reported a
+                                    // garbage volume (e.g. 7801.41 L for a real 673.78 L delivery).
+                                    long volumeBCD;
+                                    if (decoded.length >= 12) {
+                                        volumeBCD = (decoded[7] & 0xFFL) |
+                                                ((decoded[8] & 0xFFL) << 8) |
+                                                ((decoded[9] & 0xFFL) << 16) |
+                                                ((decoded[10] & 0xFFL) << 24);
+                                    } else {
+                                        // Fallback: older 9-byte layout Price[2]+Money[3]+Volume[3]+Status[1].
+                                        volumeBCD = (decoded[5] & 0xFFL) |
+                                                ((decoded[6] & 0xFFL) << 8) |
+                                                ((decoded[7] & 0xFFL) << 16);
+                                    }
                                     double volumeValue = bcdToDouble(volumeBCD, 2);
                                     Log.i(TAG, "Stage 7 - Volume BCD: " + String.format("%08X", volumeBCD) + " = " + volumeValue);
 
