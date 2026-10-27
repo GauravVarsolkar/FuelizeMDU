@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <string name="app_name">Fuelize MDU N777A-RS485 Version 2.11</string>
+    <string name="app_name">Fuelize MDU N777A-RS485 Version 2.12</string>
     <string name="coma" translatable="false">COM</string>
     <string name="comb" translatable="false">COMB</string>
     <string name="clear">Clear</string>

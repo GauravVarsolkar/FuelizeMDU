@@ -107,6 +107,10 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     private static final byte STATUS_FUELING_BOTH_VALVES = (byte) 0xF0;     // Sale in progress - both valves open
     private static final byte STATUS_FUELING_APPROACHING_MAX = (byte) 0xD4; // Sale in progress - slow flow - approaching max
     private static final byte STATUS_SALE_HALTED = (byte) 0x98;     // In-progress sale halted
+    // Spec B.5.1-1: 91 / 95 = "Sale terminated (lowered handle or max delivery reached)".
+    // Bit map: 7=handle up, 4=authorize, 0=max delivery met. NOT "authorized, waiting for valves".
+    private static final byte STATUS_SALE_TERMINATED = (byte) 0x91;
+    private static final byte STATUS_SALE_TERMINATED_ALT = (byte) 0x95;
     private static final byte STATUS_INVALID_DATA = 0x00;           // Invalid data received from FCC
     private static final byte UDC_ACK = (byte) 0xB0;                // Acknowledgement for data acceptance
 
@@ -122,6 +126,9 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
 
     TextView txtCRMNumber, tvDUStatus, tvRFIDStatus, tvFillingStatus, txtOrderQuantity, tvOutput, tvLogs;
     Button btnResume, startDeliveryButton, finishOrderButton, ButtonSendCOMA, btnStatusMsg;
+
+    // Retained for the file log. Records observations; does not control dispenser commands.
+    private String lastRawResponseHex = "(none)";
     SerialControl ComA;
     Uri uriData;
     Boolean isRun = true;
@@ -167,6 +174,16 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     private Boolean IsDispenserAuthorized = false;
     private Boolean DispensingStarted = false;
     private Boolean DispensingCompleted = false;
+    // Safety guards: only complete after fuelling was observed
+// and the displayed delivered volume subsequently increased.
+    private boolean HasSeenFuelingStatus = false;
+    private boolean HasFuelingVolumeBaseline = false;
+    private boolean HasObservedVolumeIncrease = false;
+    private double FuelingVolumeBaseline = 0.0;
+    private double MaxObservedFuelingVolume = 0.0;
+    // Require several consecutive idle readings to reject transient pump status changes.
+    private static final int IDLE_CONFIRMATIONS_REQUIRED = 3;
+    private int ConsecutiveIdleStatusCount = 0;
     private Boolean DLDataReceived = false;
 
     private byte lastFunctionCodeSent = 0;
@@ -208,6 +225,12 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     private int PriceRetryCount = 0;
     private float PumpUnitPrice = 0f;
     private boolean PumpUnitPriceValid = false;
+    // Frame layout of THIS pump, detected from the A1 reply length in Stage 13.
+    //   EXTENDED (A1 reply = 12 bytes): Price 3 / Money 4 / Volume 4 BCD  -> A5 = 14 logical bytes
+    //   COMPACT  (A1 reply =  9 bytes): Price 2 / Money 3 / Volume 3 BCD  -> A5 = 11 logical bytes
+    // Sending the EXTENDED A5 to a COMPACT pump makes it read the volume limit as 0.01 L,
+    // so it reports 0x91 (max delivery met) immediately and nothing is dispensed.
+    private boolean compactUdcLayout = false;
 
     // Preset acknowledge-and-retry, modelled on EastmanDecantActivity Stage 5, which
     // re-sends its preset every poll tick until the DU answers with a known ACK and
@@ -230,11 +253,24 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     private static final int UNKNOWN_STATUS_MAX = 15;
     private int UnknownStatusCount = 0;
 
+    // Pump reported "sale terminated" (0x91/0x95) with 0 L delivered. Bounded so the
+    // screen can never sit at 0 L forever.
+    private static final int TERMINATED_NO_VOLUME_MAX = 3;
+    private int TerminatedNoVolumeCount = 0;
+    // Last A5 frame sent, shown on the diagnostic panel (the 4-line event history scrolls it away).
+    private String lastAuthTxHex = "(none)";
+    // Status trail after A5, e.g. "A0@0.0s > 90@1.1s > F0@2.2s > 91@7.3s" - shows whether the pump
+    // never started, started then stopped, and how long after authorization.
+    private final StringBuilder statusTrail = new StringBuilder();
+    private long authSentAtMs = 0;
+    private byte lastTrailStatus = 0;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_eastman_decant);
         mContext = this;
+        initFileLog();
         tvHandler = new Handler();
         helper = new DatabaseHelper(TokheimUDCDecantActivity.this);
         setControls();
@@ -277,6 +313,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
         txtOrderQuantity = findViewById(R.id.tv_order_quantity);
         tvFillingStatus = findViewById(R.id.tv_mdu_filling_status);
         finishOrderButton = findViewById(R.id.btn_finish_order);
+        addDiagnosticEvent("SCREEN READY; waiting for order / dispenser status");
         scrollView = findViewById(R.id.scrollView);
         tvOutput = findViewById(R.id.tv_output);
         ButtonSendCOMA = findViewById(R.id.btn_set_preset);
@@ -291,6 +328,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                 builder.setCancelable(false);
                 builder.setMessage("Dispensing not completed!\nDo you want to Finish or Pause?");
                 builder.setPositiveButton("Finish", (dialog, which) -> {
+                    fileLog("[USER] chose FINISH before completion (halt + totals)");
                     PolStatus = false;
                     DU_ResponseStr = "";
                     haltSale();
@@ -300,6 +338,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                     dialog.dismiss();
                 });
                 builder.setNegativeButton("Pause", (dialog, which) -> {
+                    fileLog("[USER] chose PAUSE");
                     ProcessStage = 9;
                     startDeliveryButton.setText("Resume Delivery");
                     startDeliveryButton.setVisibility(VISIBLE);
@@ -334,6 +373,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                 builder.setCancelable(false);
                 builder.setMessage("Start Delivery of Order " + crmNumber + " for " + order_qty + " Litres?");
                 builder.setPositiveButton("YES", (dialog, which) -> {
+                    fileLog("[USER] Start Delivery confirmed");
                     IsDecantationStarted = true;
                     PolStatus = true;
                     startDeliveryButton.setVisibility(View.INVISIBLE);
@@ -376,6 +416,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             DL_ORDER_QTY = uriData.getQueryParameter(ORDER_QTY);
             DL_ORDER_NO = uriData.getQueryParameter(ORDER_NO);
             DLDataReceived = true;
+            fileLog("[ORDER] order_no=" + DL_ORDER_NO + " qty=" + DL_ORDER_QTY + " L");
             tvLogs.append("\nDL data received");
             if (helper.checkOrderExists(DL_ORDER_NO)) {
                 tvLogs.append("\nOrder exists");
@@ -417,6 +458,146 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
     }
 
     // =====================================================================================
+    // ON-SCREEN DIAGNOSTICS
+    // These messages report what the app observed. They do not prove a physical pump fault.
+    // =====================================================================================
+    // =====================================================================================
+    // PERSISTENT FILE LOG  (for post-mortem analysis of field deliveries)
+    // Per day: <app external files dir>/tokheim_logs/tokheim_YYYYMMDD.log, with
+    // size-based rollover to tokheim_YYYYMMDD_1.log, _2.log, ... once a file passes
+    // LOG_MAX_FILE_BYTES (so a busy/stuck pump never loses the tail of the day).
+    // Each line is tagged ([TX]/[RX]/[DECODE]/[STATUS]/[USER]/[ORDER]/[RESULT]/
+    // [ABORT]/[WARN]/[ERROR]/[CRASH]) with a millisecond timestamp + offset, the
+    // process stage and the order number. OTP is never logged. Uncaught crashes
+    // are captured before exit. Files older than LOG_MAX_AGE_DAYS are deleted at
+    // screen start.
+    // =====================================================================================
+    private static final String LOG_DIR_NAME = "tokheim_logs";
+    private static final int LOG_MAX_AGE_DAYS = 30;
+    private static final long LOG_MAX_FILE_BYTES = 5L * 1024 * 1024;
+    // When false, high-frequency per-frame TX/RX lines are still shown on-screen
+    // but NOT written to the file (keeps field logs lean). Decisions, results,
+    // aborts, status changes and errors are written regardless of this flag.
+    private static final boolean LOG_FRAMES = true;
+    private final java.util.concurrent.ExecutorService logExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+    private volatile java.io.File logFile = null;    // current (active) log file
+    private java.io.File logDir = null;              // folder holding the logs
+    private String logBaseName = null;               // "tokheim_YYYYMMDD" (no suffix)
+    private int logRolloverIndex = 0;                // 0 = base; 1,2,... = size rollovers
+    private volatile boolean logWriteFailed = false; // set once if a disk write fails
+
+    private void initFileLog() {
+        try {
+            java.io.File dir = getExternalFilesDir(LOG_DIR_NAME);
+            if (dir == null) dir = new java.io.File(getFilesDir(), LOG_DIR_NAME);
+            if (!dir.exists()) dir.mkdirs();
+            logDir = dir;
+            java.io.File[] files = dir.listFiles();
+            long maxAgeMs = LOG_MAX_AGE_DAYS * 24L * 3600L * 1000L;
+            if (files != null) {
+                for (java.io.File f : files) {
+                    if (System.currentTimeMillis() - f.lastModified() > maxAgeMs) f.delete();
+                }
+            }
+            String day = new java.text.SimpleDateFormat("yyyyMMdd", Locale.US).format(new java.util.Date());
+            logBaseName = "tokheim_" + day;
+            // Resume on today's newest not-yet-full file so a reopened screen keeps
+            // appending instead of clobbering an earlier rollover.
+            logRolloverIndex = 0;
+            java.io.File candidate = new java.io.File(dir, logBaseName + ".log");
+            while (candidate.exists() && candidate.length() > LOG_MAX_FILE_BYTES) {
+                logRolloverIndex++;
+                candidate = new java.io.File(dir, logBaseName + "_" + logRolloverIndex + ".log");
+            }
+            logFile = candidate;
+            installCrashLogger();
+            String appVer;
+            try {
+                android.content.pm.PackageInfo pi =
+                        getPackageManager().getPackageInfo(getPackageName(), 0);
+                appVer = pi.versionName + " (code " + pi.versionCode + ")";
+            } catch (Exception e) {
+                appVer = "unknown";
+            }
+            fileLog("===== SCREEN OPENED | app=" + appVer
+                    + " | device=" + Build.MANUFACTURER + " " + Build.MODEL
+                    + " | android=" + Build.VERSION.SDK_INT
+                    + " | port=" + SERIAL_PORT + " @9600"
+                    + " | tz=" + java.util.TimeZone.getDefault().getID() + " =====");
+        } catch (Exception e) {
+            Log.e(TAG, "File log init failed: " + e.getMessage());
+        }
+    }
+
+    // Capture uncaught exceptions (the crashes the caught-exception paths miss)
+    // into the same file BEFORE the process dies, then hand off to the previous
+    // handler so normal crash behaviour is unchanged.
+    private void installCrashLogger() {
+        final Thread.UncaughtExceptionHandler previous =
+                Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((thread, throwable) -> {
+            try {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                throwable.printStackTrace(new java.io.PrintWriter(sw));
+                // Written synchronously - the executor won't be scheduled before exit.
+                appendLine(formatLogLine("[CRASH] uncaught on " + thread.getName() + ": " + sw));
+            } catch (Exception ignore) { }
+            if (previous != null) previous.uncaughtException(thread, throwable);
+        });
+    }
+
+    private String formatLogLine(final String msg) {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z", Locale.US)
+                .format(new java.util.Date())
+                + " [S" + ProcessStage + "] [order=" + DL_ORDER_NO + "] " + msg + "\r\n";
+    }
+
+    // Appends a preformatted line, rolling over to tokheim_<day>_<n>.log when the
+    // current file passes the size cap (instead of silently dropping the rest of
+    // the day's logs). synchronized so the async path and the crash handler never
+    // interleave a write.
+    private synchronized void appendLine(final String line) {
+        try {
+            java.io.File f = logFile;
+            if (f == null) return;
+            if (f.exists() && f.length() > LOG_MAX_FILE_BYTES
+                    && logDir != null && logBaseName != null) {
+                logRolloverIndex++;
+                f = new java.io.File(logDir, logBaseName + "_" + logRolloverIndex + ".log");
+                logFile = f;
+            }
+            try (java.io.FileWriter w = new java.io.FileWriter(f, true)) { w.write(line); }
+        } catch (Exception e) {
+            if (!logWriteFailed) {
+                logWriteFailed = true;
+                Log.e(TAG, "FILE LOG WRITE FAILED (further failures suppressed): " + e.getMessage());
+            }
+        }
+    }
+
+    private void fileLog(final String msg) {
+        if (logFile == null) return;
+        final String line = formatLogLine(msg);   // captured at event time
+        try {
+            logExecutor.execute(() -> appendLine(line));
+        } catch (Exception ignore) { }
+    }
+
+    private String hexByte(byte value) {
+        return String.format(Locale.US, "%02X", value & 0xFF);
+    }
+
+    // On-screen diagnostic panel removed; this now only funnels events to the
+    // persistent file log. persist=false lets high-frequency frame lines be
+    // skipped in the file when LOG_FRAMES is off.
+    private void addDiagnosticEvent(String event) { addDiagnosticEvent(event, true); }
+
+    private void addDiagnosticEvent(String event, boolean persist) {
+        if (persist) fileLog(event);
+    }
+
+    // =====================================================================================
     // UDC PROTOCOL - COMMAND METHODS
     // =====================================================================================
 
@@ -425,6 +606,8 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             byte[] cmd = new byte[]{UDC_FP_ADDRESS, functionCode};
             byte[] dtCmd = applyDoubletalk(cmd);
             lastFunctionCodeSent = functionCode;
+            addDiagnosticEvent("[TX] " + getFunctionCodeName(functionCode) + " ["
+                    + bytesToHex(dtCmd) + "]", LOG_FRAMES);
             DU_ResponseStr = "";
             String hexStr = bytesToHex(dtCmd);
             tvLogs.append("\nUDC: " + getFunctionCodeName(functionCode) + " [" + hexStr + "]");
@@ -441,6 +624,8 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             System.arraycopy(data, 0, cmd, 2, data.length);
             byte[] dtCmd = applyDoubletalk(cmd);
             lastFunctionCodeSent = functionCode;
+            addDiagnosticEvent("[TX] " + getFunctionCodeName(functionCode) + " with data ["
+                    + bytesToHex(dtCmd) + "]", LOG_FRAMES);
             DU_ResponseStr = "";
             tvLogs.append("\nUDC+Data: " + getFunctionCodeName(functionCode));
             sendHexData(dtCmd);
@@ -457,6 +642,8 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             if (data != null) System.arraycopy(data, 0, cmd, 3, dataLen);
             byte[] dtCmd = applyDoubletalk(cmd);
             lastFunctionCodeSent = prefix;
+            addDiagnosticEvent("[TX] extended " + String.format(Locale.US, "%02X %02X", prefix, subCode)
+                    + " [" + bytesToHex(dtCmd) + "]", LOG_FRAMES);
             DU_ResponseStr = "";
             tvLogs.append("\nUDC Ext: " + String.format("%02X %02X", prefix, subCode));
             sendHexData(dtCmd);
@@ -479,7 +666,9 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
         try {
             // Display data bytes (without doubletalk): 12 34 00 00 00 00 00 00 00
             // These are the initialization values for the display
-            byte[] displayData = new byte[]{0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+            byte[] displayData = compactUdcLayout
+                    ? new byte[]{0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+                    : new byte[]{0x12, 0x34, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
             sendUDCCommandWithData(FC_SEND_DISPLAY_DATA, displayData);
             tvLogs.setText("Cmd: SEND DISPLAY DATA (A6) - Initializing FP");
             Log.i(TAG, "Sent A6 command to initialize uninitialized fuelling point");
@@ -537,13 +726,14 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
      */
     private void authorize(double price, double maxVolume) {
         try {
+            if (compactUdcLayout) { authorizeCompact(price, maxVolume); return; }
             byte sfo = SLOW_FLOW_OFFSET;                       // spec example uses 05
 
             // Price/Unit Volume - PPP.PP, 3 BCD bytes, LSB first.
             int priceInt = (int) Math.round(price * 100);
             byte pLsb = intToBCD(priceInt % 100),
-                 p2sb = intToBCD((priceInt / 100) % 100),
-                 pMsb = intToBCD((priceInt / 10000) % 100);
+                    p2sb = intToBCD((priceInt / 100) % 100),
+                    pMsb = intToBCD((priceInt / 10000) % 100);
 
             // Max delivery MONEY - MMMMM.MM, 4 BCD bytes, LSB first. Set comfortably
             // above (volume x price) so the VOLUME limit below is what actually stops
@@ -551,18 +741,24 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             double moneyLimit = Math.min(99999.99, maxVolume * price + 100.0);
             long moneyInt = Math.round(moneyLimit * 100);
             byte mLsb = intToBCD((int) (moneyInt % 100)),
-                 m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
-                 m3sb = intToBCD((int) ((moneyInt / 10000) % 100)),
-                 mMsb = intToBCD((int) ((moneyInt / 1000000) % 100));
+                    m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
+                    m3sb = intToBCD((int) ((moneyInt / 10000) % 100)),
+                    mMsb = intToBCD((int) ((moneyInt / 1000000) % 100));
 
             // Max delivery VOLUME - VVVVV.VV, 4 BCD bytes, LSB first = THE PRESET.
             int volInt = (int) Math.round(maxVolume * 100);
             byte vLsb = intToBCD(volInt % 100),
-                 v2sb = intToBCD((volInt / 100) % 100),
-                 v3sb = intToBCD((volInt / 10000) % 100),
-                 vMsb = intToBCD((volInt / 1000000) % 100);
+                    v2sb = intToBCD((volInt / 100) % 100),
+                    v3sb = intToBCD((volInt / 10000) % 100),
+                    vMsb = intToBCD((volInt / 1000000) % 100);
 
             byte[] data = new byte[]{sfo, pLsb, p2sb, pMsb, mLsb, m2sb, m3sb, mMsb, vLsb, v2sb, v3sb, vMsb};
+            lastAuthTxHex = "F0 A5 " + bytesToHex(data) + "  (price=" + price + ", maxVol=" + maxVolume
+                    + ", maxMoney=" + moneyLimit + ", SFO=" + (sfo & 0xFF) + ")";
+            fileLog("[TX] A5 FRAME " + lastAuthTxHex);
+            authSentAtMs = System.currentTimeMillis();
+            statusTrail.setLength(0);
+            lastTrailStatus = 0;
             sendUDCCommandWithData(FC_AUTHORIZE, data);
             Log.i(TAG, "A5 AUTHORIZE price=" + price + " preset(maxVol)=" + maxVolume
                     + " L maxMoney=" + moneyLimit + " data=[F0 A5 " + bytesToHex(data) + "]");
@@ -588,25 +784,26 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
      */
     private void sendPresetDisplay(double volume) {
         try {
+            if (compactUdcLayout) { sendPresetDisplayCompact(volume); return; }
             double price = PumpUnitPriceValid ? PumpUnitPrice : 0.0;
             double money = Math.min(99999.99, volume * price);   // shows expected amount too
 
             int priceInt = (int) Math.round(price * 100);
             byte pLsb = intToBCD(priceInt % 100),
-                 p2sb = intToBCD((priceInt / 100) % 100),
-                 pMsb = intToBCD((priceInt / 10000) % 100);
+                    p2sb = intToBCD((priceInt / 100) % 100),
+                    pMsb = intToBCD((priceInt / 10000) % 100);
 
             long moneyInt = Math.round(money * 100);
             byte mLsb = intToBCD((int) (moneyInt % 100)),
-                 m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
-                 m3sb = intToBCD((int) ((moneyInt / 10000) % 100)),
-                 mMsb = intToBCD((int) ((moneyInt / 1000000) % 100));
+                    m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
+                    m3sb = intToBCD((int) ((moneyInt / 10000) % 100)),
+                    mMsb = intToBCD((int) ((moneyInt / 1000000) % 100));
 
             int volInt = (int) Math.round(volume * 100);
             byte vLsb = intToBCD(volInt % 100),
-                 v2sb = intToBCD((volInt / 100) % 100),
-                 v3sb = intToBCD((volInt / 10000) % 100),
-                 vMsb = intToBCD((volInt / 1000000) % 100);
+                    v2sb = intToBCD((volInt / 100) % 100),
+                    v3sb = intToBCD((volInt / 10000) % 100),
+                    vMsb = intToBCD((volInt / 1000000) % 100);
 
             byte[] data = new byte[]{pLsb, p2sb, pMsb, mLsb, m2sb, m3sb, mMsb, vLsb, v2sb, v3sb, vMsb};
             lastA6TxHex = "F0 A6 " + bytesToHex(data);   // logical frame (before doubletalk)
@@ -615,6 +812,72 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                     + " data=[F0 A6 " + bytesToHex(data) + "]");
             tvLogs.append("\nA6 preset-display " + volume + " L [F0 A6 " + bytesToHex(data) + "]");
         } catch (Exception e) { Log.e(TAG, "A6 preset-display error: " + e.getMessage()); }
+    }
+
+    /**
+     * A5 Authorize for the COMPACT layout (pump whose A1 reply is 9 bytes).
+     * Fx A5 [SFO:1] [Price:2 BCD LSB-first PP.PP] [Max Money:3 BCD LSB-first MMMM.MM] [Max Volume:3 BCD LSB-first VVVV.VV]
+     * = 11 logical bytes = 22 on the wire (matches spec figure C.2-3 "A5 TX 22").
+     * Limits: price 99.99, money 9999.99, volume 9999.99.
+     */
+    private void authorizeCompact(double price, double maxVolume) {
+        try {
+            byte sfo = SLOW_FLOW_OFFSET;
+            int priceInt = (int) Math.round(Math.min(99.99, price) * 100);
+            byte p0 = intToBCD(priceInt % 100), p1 = intToBCD((priceInt / 100) % 100);
+
+            double wantedMoney = maxVolume * price + 100.0;
+            double moneyLimit = Math.min(9999.99, wantedMoney);
+            if (wantedMoney - 100.0 > 9999.99) {
+                // Money field cannot hold volume x price: the MONEY limit would stop the fill early.
+                tvLogs.append("\nWARNING: order value exceeds 9999.99 - pump money limit will stop the fill early");
+                addDiagnosticEvent("[WARN] order value > 9999.99; money limit binds before volume");
+            }
+            long moneyInt = Math.round(moneyLimit * 100);
+            byte m0 = intToBCD((int) (moneyInt % 100)),
+                    m1 = intToBCD((int) ((moneyInt / 100) % 100)),
+                    m2 = intToBCD((int) ((moneyInt / 10000) % 100));
+
+            double vol = Math.min(9999.99, maxVolume);
+            int volInt = (int) Math.round(vol * 100);
+            byte v0 = intToBCD(volInt % 100),
+                    v1 = intToBCD((volInt / 100) % 100),
+                    v2 = intToBCD((volInt / 10000) % 100);
+
+            byte[] data = new byte[]{sfo, p0, p1, m0, m1, m2, v0, v1, v2};
+            lastAuthTxHex = "F0 A5 " + bytesToHex(data) + "  [COMPACT] (price=" + price + ", maxVol=" + vol
+                    + ", maxMoney=" + moneyLimit + ", SFO=" + (sfo & 0xFF) + ")";
+            fileLog("[TX] A5 FRAME " + lastAuthTxHex);
+            authSentAtMs = System.currentTimeMillis();
+            statusTrail.setLength(0);
+            lastTrailStatus = 0;
+            sendUDCCommandWithData(FC_AUTHORIZE, data);
+            Log.i(TAG, "A5 AUTHORIZE (compact) " + lastAuthTxHex);
+            tvLogs.append("\nA5 AUTHORIZE (compact) preset " + vol + " L [F0 A5 " + bytesToHex(data) + "]");
+            tvLogs.setText("Cmd: AUTHORIZE (A5) - preset " + vol + " L");
+        } catch (Exception e) { Log.e(TAG, "Auth(compact) error: " + e.getMessage()); }
+    }
+
+    /** A6 for the COMPACT layout: Fx A6 [Price:2][Money:3][Volume:3] = 10 logical bytes = 20 on the wire. */
+    private void sendPresetDisplayCompact(double volume) {
+        try {
+            double price = PumpUnitPriceValid ? Math.min(99.99, PumpUnitPrice) : 0.0;
+            double money = Math.min(9999.99, volume * price);
+            int priceInt = (int) Math.round(price * 100);
+            byte p0 = intToBCD(priceInt % 100), p1 = intToBCD((priceInt / 100) % 100);
+            long moneyInt = Math.round(money * 100);
+            byte m0 = intToBCD((int) (moneyInt % 100)),
+                    m1 = intToBCD((int) ((moneyInt / 100) % 100)),
+                    m2 = intToBCD((int) ((moneyInt / 10000) % 100));
+            int volInt = (int) Math.round(Math.min(9999.99, volume) * 100);
+            byte v0 = intToBCD(volInt % 100),
+                    v1 = intToBCD((volInt / 100) % 100),
+                    v2 = intToBCD((volInt / 10000) % 100);
+            byte[] data = new byte[]{p0, p1, m0, m1, m2, v0, v1, v2};
+            lastA6TxHex = "F0 A6 " + bytesToHex(data);
+            sendUDCCommandWithData(FC_SEND_DISPLAY_DATA, data);
+            Log.i(TAG, "A6 PRESET-DISPLAY (compact) vol=" + volume + " data=[" + lastA6TxHex + "]");
+        } catch (Exception e) { Log.e(TAG, "A6 compact error: " + e.getMessage()); }
     }
 
     /** A7 - Reset fueling point. Used only by the reset-then-A6 display method. */
@@ -716,6 +979,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
      *  "Invalid qty" abort: parks in Stage 11 with polling off, so the message stays
      *  on screen instead of being overwritten by the next poll tick. */
     private void abortDelivery(String reason) {
+        addDiagnosticEvent("[ABORT] " + reason);
         Log.e(TAG, "Aborting delivery: " + reason);
         tvFillingStatus.setTextColor(Color.RED);
         tvFillingStatus.setText(reason);
@@ -768,6 +1032,8 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             case STATUS_FUELING_APPROACHING_MAX: return "Fueling (approaching max)";
             case STATUS_SALE_HALTED: return "Sale Halted";
             case STATUS_INVALID_DATA: return "Invalid Data";
+            case STATUS_SALE_TERMINATED:
+            case STATUS_SALE_TERMINATED_ALT: return "Sale terminated (max delivery / handle down)";
             case UDC_ACK: return "ACK";
             default:
                 // For unknown status, show hex and try to interpret bits
@@ -998,6 +1264,11 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 // correctly rejected here, exactly as the A9 totals reply is.
                                 if (decoded != null && decoded.length >= 2
                                         && isValidBCD(decoded[0]) && isValidBCD(decoded[1])) {
+                                    compactUdcLayout = decoded.length < 12;
+                                    addDiagnosticEvent("[DECODE] A1 reply = " + decoded.length + " bytes -> "
+                                            + (compactUdcLayout ? "COMPACT (P2/M3/V3)" : "EXTENDED (P3/M4/V4)") + " layout");
+                                    tvLogs.append("\nA1 frame " + decoded.length + " bytes: "
+                                            + (compactUdcLayout ? "COMPACT" : "EXTENDED") + " layout");
                                     long priceBCD = (decoded[0] & 0xFFL) | ((decoded[1] & 0xFFL) << 8);
                                     double p = bcdToDouble(priceBCD, 2);
                                     if (p > 0 && p <= 99999.99) {
@@ -1162,9 +1433,9 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 String interp;
                                 if (raw.isEmpty()) {
                                     interp = "NO REPLY - the pump did not answer the A6 command. It is "
-                                           + "most likely not programmed to accept main-display data "
-                                           + "over A6 while idle, so the Volume window cannot be "
-                                           + "pre-filled before nozzle-lift.";
+                                            + "most likely not programmed to accept main-display data "
+                                            + "over A6 while idle, so the Volume window cannot be "
+                                            + "pre-filled before nozzle-lift.";
                                 } else {
                                     byte[] resp = hexStringToByteArray(raw.replace(" ", ""));
                                     byte[] decoded = removeDoubletalk(resp);
@@ -1174,15 +1445,15 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                                 + " (" + getStatusDescription(st) + ")";
                                         if (st == STATUS_IDLE_HANDLE_DOWN || st == 0x24) {
                                             interp = "Pump ACCEPTED A6 (status " + decodedStr + "). The "
-                                                   + "display data was taken - if the Volume window is "
-                                                   + "still blank, this pump's firmware does not render "
-                                                   + "A6 volume while idle.";
+                                                    + "display data was taken - if the Volume window is "
+                                                    + "still blank, this pump's firmware does not render "
+                                                    + "A6 volume while idle.";
                                         } else if (st == STATUS_UNINITIALIZED) {
                                             interp = "Pump returned 0x2F (uninitialised) to A6 - it needs "
-                                                   + "initialising before it will show display data.";
+                                                    + "initialising before it will show display data.";
                                         } else {
                                             interp = "Pump replied status " + decodedStr + " (not 20/24) to "
-                                                   + "A6 - it did not update the display in this state.";
+                                                    + "A6 - it did not update the display in this state.";
                                         }
                                     } else {
                                         interp = "Reply could not be doubletalk-decoded: [" + raw + "]";
@@ -1233,8 +1504,14 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                     if (lastStatusReceived == STATUS_FUELING_BOTH_VALVES ||
                                             lastStatusReceived == STATUS_FUELING_SLOW_FLOW ||
                                             lastStatusReceived == STATUS_FUELING_APPROACHING_MAX) {
-                                        // Fueling started! Move to monitor stage
+
+                                        // A genuine fuelling status has been observed.
                                         Log.i(TAG, "Stage 5 - Fueling STARTED, moving to Stage 6");
+
+                                        HasSeenFuelingStatus = true;
+                                        IsFuelingStarted = true;
+                                        DispensingStarted = true;
+
                                         tvFillingStatus.setText("Dispensing...");
                                         IsDispenserAuthorized = true;
                                         ProcessStage = 6;
@@ -1254,6 +1531,7 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                                 double price = PumpUnitPrice;
                                                 double qty = Double.parseDouble(DL_ORDER_QTY.trim());   // accepts 2 and 2.5
                                                 authorize(price, qty);
+                                                ConsecutiveIdleStatusCount = 0;
                                                 IsDispenserAuthorized = true;
                                                 tvFillingStatus.setText("Authorized - Start dispensing...");
                                                 // Move to Stage 6 to monitor fueling
@@ -1312,6 +1590,17 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                             } catch (Exception e) { requestStatus(); }
                                         } else {
                                             requestStatus();
+                                        }
+                                    } else if (lastStatusReceived == STATUS_SALE_TERMINATED
+                                            || lastStatusReceived == STATUS_SALE_TERMINATED_ALT) {
+                                        // Leftover "sale terminated" - clear it with A7 so the FP returns
+                                        // to idle instead of re-polling forever. Bounded.
+                                        UnknownStatusCount++;
+                                        if (UnknownStatusCount >= UNKNOWN_STATUS_MAX) {
+                                            abortDelivery("DU stuck in Sale Terminated (0x"
+                                                    + hexByte(lastStatusReceived) + ") - cannot start");
+                                        } else {
+                                            sendReset();
                                         }
                                     } else if (lastStatusReceived == STATUS_DISPENSER_ERROR) {
                                         // Dispenser error (A2)
@@ -1400,46 +1689,158 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
 
                                     // Status is the LAST byte
                                     lastStatusReceived = decoded[decoded.length - 1];
+                                    if (authSentAtMs > 0 && statusTrail.length() < 150
+                                            && (statusTrail.length() == 0 || lastStatusReceived != lastTrailStatus)) {
+                                        if (statusTrail.length() > 0) statusTrail.append(" > ");
+                                        statusTrail.append(hexByte(lastStatusReceived)).append('@')
+                                                .append(String.format(Locale.US, "%.1fs",
+                                                        (System.currentTimeMillis() - authSentAtMs) / 1000.0));
+                                        lastTrailStatus = lastStatusReceived;
+                                    }
+                                    addDiagnosticEvent("[DECODE] A1 decoded: status 0x" + hexByte(lastStatusReceived)
+                                            + " (" + getStatusDescription(lastStatusReceived) + "), volume="
+                                            + df.format(volumeValue) + " L");
                                     Log.i(TAG, "Stage 7 - Status byte: 0x" + String.format("%02X", lastStatusReceived) + " = " + getStatusDescription(lastStatusReceived));
 
                                     volumeFloat = (float) volumeValue;
                                     Log.i(TAG, "Stage 7 - Calculated Volume: " + volumeFloat);
 
                                     tvFillingStatus.setText(df.format(volumeFloat) + " L");
-                                    DispensingStarted = true;
-                                    IsFuelingStarted = true;
 
-                                    // Check status to determine next action
-                                    // Fueling states: D0, F0, D4
-                                    if (lastStatusReceived == STATUS_FUELING_BOTH_VALVES ||
-                                            lastStatusReceived == STATUS_FUELING_SLOW_FLOW ||
-                                            lastStatusReceived == STATUS_FUELING_APPROACHING_MAX) {
-                                        Log.i(TAG, "Stage 7 - Still fueling, continue polling");
+// An A1 display response alone does not prove that fuelling started.
+                                    // Establish a volume baseline on the first post-authorization
+                                    // display read, then track volume on EVERY read (not only reads
+                                    // whose status happens to be a fueling status).
+                                    if (!HasFuelingVolumeBaseline) {
+                                        FuelingVolumeBaseline = volumeValue;
+                                        MaxObservedFuelingVolume = volumeValue;
+                                        HasFuelingVolumeBaseline = true;
+                                    } else {
+                                        if (volumeValue > MaxObservedFuelingVolume) {
+                                            MaxObservedFuelingVolume = volumeValue;
+                                        }
+                                        if (MaxObservedFuelingVolume >
+                                                FuelingVolumeBaseline + 0.01) {
+                                            HasObservedVolumeIncrease = true;
+                                        }
+                                    }
+
+                                    boolean isActiveFuelingStatus =
+                                            (lastStatusReceived & 0xF0) == 0xD0 ||
+                                                    (lastStatusReceived & 0xF0) == 0xF0;
+
+                                    if (isActiveFuelingStatus) {
+                                        HasSeenFuelingStatus = true;
+                                        IsFuelingStarted = true;
+                                        DispensingStarted = true;
+                                        ConsecutiveIdleStatusCount = 0;
+                                        Log.i(TAG, "Stage 7 - Fueling observed: status=0x"
+                                                + String.format("%02X", lastStatusReceived)
+                                                + ", baseline=" + FuelingVolumeBaseline
+                                                + ", maxVolume=" + MaxObservedFuelingVolume
+                                                + ", volumeIncreased=" + HasObservedVolumeIncrease);
+                                    }
+
+                                    // Status transition handling. A single idle response is not
+                                    // enough to complete: slow UDCs can briefly report idle
+                                    // while authorization/valve state is transitioning.
+                                    int statusHighNibble = lastStatusReceived & 0xF0;
+                                    final boolean saleTerminated = (lastStatusReceived == STATUS_SALE_TERMINATED
+                                            || lastStatusReceived == STATUS_SALE_TERMINATED_ALT);
+                                    if (saleTerminated) {
+                                        // 0x91/0x95 = the PUMP ended the sale (max delivery met, or no
+                                        // flow pulses for 5 s, or handle lowered). It is not "authorized".
+                                        if (volumeValue > 0.01) {
+                                            // Real delivery finished (preset reached). Finalize.
+                                            HasObservedVolumeIncrease = true;
+                                            ConsecutiveIdleStatusCount++;
+                                            TerminatedNoVolumeCount = 0;
+                                            addDiagnosticEvent("[STATUS] SALE TERMINATED (0x" + hexByte(lastStatusReceived)
+                                                    + ") at " + df.format(volumeValue) + " L ["
+                                                    + ConsecutiveIdleStatusCount + "/" + IDLE_CONFIRMATIONS_REQUIRED + "]");
+                                            if (ConsecutiveIdleStatusCount >= IDLE_CONFIRMATIONS_REQUIRED) {
+                                                ProcessStage = 8;
+                                                DU_ResponseStr = "";
+                                                EndTotRetryCount = 0;
+                                                EndTotalizerValid = false;
+                                                requestTotals();
+                                            } else {
+                                                ProcessStage = 6;
+                                                DU_ResponseStr = "";
+                                                requestDisplayData();
+                                            }
+                                        } else {
+                                            // Terminated with nothing delivered: do NOT keep polling.
+                                            ConsecutiveIdleStatusCount = 0;
+                                            TerminatedNoVolumeCount++;
+                                            addDiagnosticEvent("[STATUS] SALE TERMINATED AT 0 L (0x" + hexByte(lastStatusReceived)
+                                                    + ") " + TerminatedNoVolumeCount + "/" + TERMINATED_NO_VOLUME_MAX);
+                                            if (TerminatedNoVolumeCount >= TERMINATED_NO_VOLUME_MAX) {
+                                                sendReset();   // A7 - clear the terminated sale on the FP
+                                                abortDelivery("Pump ended the sale at 0 L (status 0x"
+                                                        + hexByte(lastStatusReceived)
+                                                        + " = max delivery met / no flow). Check nozzle trigger, "
+                                                        + "flow and preset, then retry");
+                                            } else {
+                                                ProcessStage = 6;
+                                                DU_ResponseStr = "";
+                                                requestDisplayData();
+                                            }
+                                        }
+                                    } else if (statusHighNibble == 0xD0 || statusHighNibble == 0xF0) {
+                                        ConsecutiveIdleStatusCount = 0;
                                         ProcessStage = 6;
-                                    } else if (lastStatusReceived == STATUS_AUTHORIZED) {
-                                        // Authorized but valves not open yet (90)
-                                        Log.i(TAG, "Stage 7 - Authorized, waiting for valves to open");
+                                    } else if (statusHighNibble == 0x90) {
+                                        // Authorized, but valves have not opened yet.
+                                        ConsecutiveIdleStatusCount = 0;
+                                        Log.i(TAG, "Stage 7 - Authorized; waiting for valves to open");
                                         ProcessStage = 6;
-                                    } else if (lastStatusReceived == STATUS_IDLE_HANDLE_DOWN || lastStatusReceived == STATUS_IDLE_HANDLE_UP) {
-                                        // REVERTED to the known-good production behaviour.
-                                        // The 0 L guard only existed to compensate for the Stage 5
-                                        // A3-authorize path (now removed), which could enter Stage 7
-                                        // with the nozzle still down. With that gone the guard is
-                                        // dead weight, and it risks hanging completion if the pump
-                                        // blanks its volume display when the nozzle is re-hooked.
-                                        // Fueling complete - nozzle returned (20 or A0)
-                                        Log.i(TAG, "Stage 7 - Fueling COMPLETE! Status: " + getStatusDescription(lastStatusReceived) + " - Moving to Stage 8");
-                                        ProcessStage = 8;
-                                        DU_ResponseStr = "";
-                                        requestTotals();
+                                    } else if (lastStatusReceived == STATUS_IDLE_HANDLE_DOWN ||
+                                            lastStatusReceived == STATUS_IDLE_HANDLE_UP) {
+                                        if (HasSeenFuelingStatus && HasObservedVolumeIncrease) {
+                                            ConsecutiveIdleStatusCount++;
+                                            Log.i(TAG, "Stage 7 - Idle confirmation "
+                                                    + ConsecutiveIdleStatusCount + "/"
+                                                    + IDLE_CONFIRMATIONS_REQUIRED
+                                                    + "; delivered volume=" + volumeValue + " L");
+
+                                            if (ConsecutiveIdleStatusCount >= IDLE_CONFIRMATIONS_REQUIRED) {
+                                                Log.i(TAG, "Stage 7 - Fueling complete after consecutive idle confirmations. "
+                                                        + "Maximum observed volume=" + MaxObservedFuelingVolume + " L");
+                                                ProcessStage = 8;
+                                                DU_ResponseStr = "";
+                                                EndTotRetryCount = 0;
+                                                EndTotalizerValid = false;
+                                                requestTotals();
+                                            } else {
+                                                ProcessStage = 6;
+                                                DU_ResponseStr = "";
+                                                requestDisplayData();
+                                            }
+                                        } else {
+                                            // Before any proven delivery, idle means "keep waiting",
+                                            // not "complete". This prevents the 0.12 L early-close case.
+                                            ConsecutiveIdleStatusCount = 0;
+                                            Log.w(TAG, "Stage 7 - Idle without proven delivery; continue polling. "
+                                                    + "seenFueling=" + HasSeenFuelingStatus
+                                                    + ", volumeIncreased=" + HasObservedVolumeIncrease
+                                                    + ", baseline=" + FuelingVolumeBaseline
+                                                    + ", maxVolume=" + MaxObservedFuelingVolume);
+                                            ProcessStage = 6;
+                                            DU_ResponseStr = "";
+                                            requestDisplayData();
+                                        }
                                     } else if (lastStatusReceived == STATUS_SALE_HALTED) {
+
                                         // Sale halted (98)
+                                        addDiagnosticEvent("[STATUS] DU STATUS INDICATES SALE HALTED (0x98)");
                                         Log.i(TAG, "Stage 7 - Sale HALTED");
                                         ProcessStage = 9;
                                         tvFillingStatus.setText("PAUSED - " + df.format(volumeFloat) + " L");
                                         btnResume.setVisibility(VISIBLE);
                                     } else if (lastStatusReceived == STATUS_DISPENSER_ERROR) {
                                         // Dispenser error (A2)
+                                        addDiagnosticEvent("[STATUS] DU STATUS INDICATES DISPENSER ERROR (0xA2)");
                                         Log.e(TAG, "Stage 7 - DISPENSER ERROR!");
                                         tvFillingStatus.setTextColor(Color.RED);
                                         tvFillingStatus.setText("ERROR - " + df.format(volumeFloat) + " L");
@@ -1461,11 +1862,14 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                         }
                                     }
                                 } else {
+                                    addDiagnosticEvent("[DECODE] A1 RESPONSE DECODED TOO SHORT; raw response retained");
                                     Log.w(TAG, "Stage 7 - Decoded length insufficient, re-polling");
                                     DU_ResponseStr = "";
                                     requestDisplayData();
                                 }
                             } else {
+                                addDiagnosticEvent("[DECODE] A1 RESPONSE TOO SHORT (" + DU_ResponseStr.length()
+                                        + " hex chars); raw response retained");
                                 Log.w(TAG, "Stage 7 - Response too short (" + DU_ResponseStr.length() + " chars), re-polling");
                                 DU_ResponseStr = "";
                                 requestDisplayData();
@@ -1535,10 +1939,17 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                                 // writing null into the startTotalizer/endTotalizer columns.
                                 orderData.setStartTotalizer(startTotForCallback());
                                 orderData.setEndTotalizer(endTotForCallback());
+                                fileLog("[RESULT] qty=" + df.format(volumeFloat) + " L | startTot="
+                                        + (StartTotalizerValid ? df.format(StartTotalizer) : "N/A")
+                                        + " | endTot=" + (EndTotalizerValid ? df.format(EndTotalizer) : "N/A")
+                                        + " | totalizersUsable=" + totalizersUsable()
+                                        + " | maxObservedVol=" + df.format(MaxObservedFuelingVolume));
                                 orderData.setSkipAuthentication("Y");
                                 helper.insertOrderData(orderData);
                                 DispensingStarted = false;
                                 DispensingCompleted = true;
+                                addDiagnosticEvent("[RESULT] APP FINALIZED ORDER; qty=" + df.format(volumeFloat)
+                                        + " L; totalizersUsable=" + totalizersUsable());
                                 finishOrderButton.setText("Finish");
                                 finishOrderButton.setTextColor(Color.BLACK);
                                 finishOrderButton.setBackgroundColor(Color.CYAN);
@@ -1567,7 +1978,10 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                         }
                     }
                     polhandler.postDelayed(this, timer);
-                } catch (Exception e) { e.printStackTrace(); }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    fileLog("[ERROR] EXCEPTION in poll loop: " + e);
+                }
             }
         };
         polhandler.post(polrunnable);
@@ -1618,6 +2032,9 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
         String respHex = sMsg.toString();
         tvLogs.append(" Resp: " + respHex);
         Log.i(TAG, "RESPONSE RECEIVED HEX: " + respHex + " | Length: " + respHex.length());
+        lastRawResponseHex = respHex;
+        addDiagnosticEvent("[RX] after " + getFunctionCodeName(lastFunctionCodeSent)
+                + " [" + respHex + "]", LOG_FRAMES);
         DU_ResponseStr = DU_ResponseStr + respHex;
         //Log.i(TAG, "DU_ResponseStr accumulated: " + DU_ResponseStr + " | Total Length: " + DU_ResponseStr.length());
         if (ProcessStage == 6) ProcessStage = 7;
@@ -1652,6 +2069,11 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        fileLog("===== SCREEN CLOSED =====");
+        try {
+            logExecutor.shutdown();
+            logExecutor.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (Exception ignore) { }
         if (DispQueue != null) { isRun = false; DispQueue.setResume(); }
         CloseComPort(ComA);
         android.os.Process.killProcess(android.os.Process.myPid());

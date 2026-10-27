@@ -10,7 +10,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:gravity="center"
-        android:text="CSI Eastman DU Test App"
+        android:text="CSI Tokheim DU Test App"
         android:textSize="20sp" />
 
     <LinearLayout
