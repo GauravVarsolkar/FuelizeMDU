@@ -735,10 +735,12 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
                     p2sb = intToBCD((priceInt / 100) % 100),
                     pMsb = intToBCD((priceInt / 10000) % 100);
 
-            // Max delivery MONEY - MMMMM.MM, 4 BCD bytes, LSB first. Set comfortably
-            // above (volume x price) so the VOLUME limit below is what actually stops
-            // the sale; capped at the field maximum 99999.99.
-            double moneyLimit = Math.min(99999.99, maxVolume * price + 100.0);
+            // Max delivery MONEY - 4 BCD bytes, LSB first. Set to the field's full
+            // maximum (MMMMMM.MM = 999999.99) so the MONEY limit never binds before the
+            // VOLUME limit below, at ANY price per litre. (Previously capped at 99999.99,
+            // which at a non-1 price stopped the fill early: 99999.99 / price litres,
+            // e.g. only ~4901 L at price 20.40.)
+            double moneyLimit = 999999.99;
             long moneyInt = Math.round(moneyLimit * 100);
             byte mLsb = intToBCD((int) (moneyInt % 100)),
                     m2sb = intToBCD((int) ((moneyInt / 100) % 100)),
@@ -827,7 +829,11 @@ public class TokheimUDCDecantActivity extends AppCompatActivity {
             byte p0 = intToBCD(priceInt % 100), p1 = intToBCD((priceInt / 100) % 100);
 
             double wantedMoney = maxVolume * price + 100.0;
-            double moneyLimit = Math.min(9999.99, wantedMoney);
+            // Set the compact money field to its full maximum (MMMM.MM = 9999.99) so it
+            // never binds before the volume preset. This field physically cannot hold
+            // more than 9999.99, so very large orders at a high price are still limited
+            // by the dispenser hardware (warned below).
+            double moneyLimit = 9999.99;
             if (wantedMoney - 100.0 > 9999.99) {
                 // Money field cannot hold volume x price: the MONEY limit would stop the fill early.
                 tvLogs.append("\nWARNING: order value exceeds 9999.99 - pump money limit will stop the fill early");
